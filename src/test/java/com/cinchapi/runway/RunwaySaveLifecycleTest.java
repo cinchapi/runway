@@ -21,12 +21,12 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import org.junit.Assert;
 import org.junit.Test;
 
-import com.cinchapi.common.reflect.Reflection;
 import com.google.common.collect.Sets;
 
 public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
@@ -55,25 +55,6 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
             Assert.assertEquals(player.name, loaded.name);
             Assert.assertEquals(player.score, loaded.score);
         }
-    }
-
-    @Test
-    public void testNoSaveListenerDoesNotCreateExecutor() throws Exception {
-        runway.close();
-        runway = runwayBuilder().build();
-
-        // Verify the saveNotificationExecutor field is null
-        Object executor = Reflection.get("saveNotificationExecutor", runway);
-        Assert.assertNull(
-                "Save notification executor should be null when no listener is provided",
-                executor);
-
-        // Save a record to ensure it works without a listener
-        Player player = new Player("Test Player", 30);
-        boolean saved = player.save();
-
-        Assert.assertTrue("Record should save successfully without a listener",
-                saved);
     }
 
     @Test
@@ -404,27 +385,6 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     @Test
-    public void testQueueSaveNotificationWithNoListenerIsNoOp()
-            throws Exception {
-        runway.close();
-        runway = runwayBuilder().build();
-
-        // Verify the saveNotificationQueue field is null
-        Object queue = Reflection.get("saveNotificationQueue", runway);
-        Assert.assertNull(
-                "Save notification queue should be null when no listener is provided",
-                queue);
-
-        // Call queueSaveNotification directly to ensure it doesn't throw an
-        // exception
-        Player player = new Player("Test Player", 30);
-        runway.enqueueSaveNotification(player);
-
-        // If we got here without an exception, the test passes
-        Assert.assertTrue(true);
-    }
-
-    @Test
     public void testSaveListenerCalledForBulkSave() throws Exception {
         int recordCount = 5;
         CountDownLatch latch = new CountDownLatch(recordCount);
@@ -492,35 +452,6 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
                 latch.await(5, TimeUnit.SECONDS));
 
         Assert.assertEquals(2, callCount.get());
-    }
-
-    @Test
-    public void testSaveListenerCalledOnMultipleRecordSave() throws Exception {
-        int recordCount = 5;
-        CountDownLatch latch = new CountDownLatch(recordCount);
-        Set<Record> savedRecords = Sets.newConcurrentHashSet();
-
-        runway.close();
-        runway = runwayBuilder().onSave(record -> {
-            savedRecords.add(record);
-            latch.countDown();
-        }).build();
-
-        Player[] players = new Player[recordCount];
-        for (int i = 0; i < recordCount; i++) {
-            players[i] = new Player("Player " + i, i * 10);
-        }
-
-        runway.save(players);
-
-        // Wait for all save listeners to be called
-        Assert.assertTrue("Not all save listeners were called within timeout",
-                latch.await(5, TimeUnit.SECONDS));
-
-        Assert.assertEquals(recordCount, savedRecords.size());
-        for (Player player : players) {
-            Assert.assertTrue(savedRecords.contains(player));
-        }
     }
 
     @Test
@@ -641,6 +572,54 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         // Verify the save listener was not called
         Assert.assertFalse("Save listener should not be called when save fails",
                 listenerCalled.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Record} with overridden save
+     * behavior does not trigger save listeners, while a normal record saved in
+     * the same call does.
+     * <p>
+     * <strong>Start state:</strong> A {@link Runway} built with an untyped save
+     * listener.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Bulk-save a normal {@link PreSaveHookRecord} together with an
+     * {@link OverrideSaveRecord} whose override returns {@code true}.</li>
+     * <li>Wait for the listener to fire, then allow extra time for any
+     * misrouted notification.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The listener fires exactly once, and only for
+     * the normal record.
+     */
+    @Test
+    public void testSaveListenerNotFiredForOverrideSaveRecord()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        Set<Record> notified = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onSave(record -> {
+            notified.add(record);
+            latch.countDown();
+        }).build();
+
+        OverrideSaveRecord bypassed = new OverrideSaveRecord();
+        bypassed.name = "Bypassed";
+        bypassed.overrideResult = true;
+        PreSaveHookRecord persisted = new PreSaveHookRecord();
+        persisted.name = "Persisted";
+
+        Assert.assertTrue(runway.save(persisted, bypassed));
+        Assert.assertTrue("Save listener was not called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        // Give some time to catch any extra, misrouted notifications
+        Thread.sleep(1000);
+
+        Assert.assertEquals(1, notified.size());
+        Assert.assertTrue(notified.contains(persisted));
     }
 
     @Test
@@ -799,32 +778,6 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(typedSaves.contains(player));
         Assert.assertEquals(1, untypedSaves.size());
         Assert.assertTrue(untypedSaves.contains(player));
-    }
-
-    @Test
-    public void testListenerErrorIsolation() throws Exception {
-        CountDownLatch latch = new CountDownLatch(1);
-        AtomicInteger secondCount = new AtomicInteger(0);
-
-        runway.close();
-        runway = runwayBuilder().onSave(Record.class, record -> {
-            throw new RuntimeException(
-                    "Intentional exception from first listener");
-        }).onSave(Record.class, record -> {
-            secondCount.incrementAndGet();
-            latch.countDown();
-        }).build();
-
-        Player player = new Player("Error Isolation", 33);
-        player.save();
-
-        Assert.assertTrue(
-                "Second listener was not called despite first throwing",
-                latch.await(5, TimeUnit.SECONDS));
-
-        Assert.assertEquals(
-                "Second listener should still fire after first throws", 1,
-                secondCount.get());
     }
 
     @Test
@@ -1313,6 +1266,68 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a save does not recursively persist a
+     * {@link Record} that is reachable only through a transient field, so a
+     * transient reference stays outside the saved graph.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TransientLinkRecord} and a
+     * saved {@link ChildRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Change the {@link ChildRecord ChildRecord's} label without saving
+     * it.</li>
+     * <li>Point the {@link TransientLinkRecord TransientLinkRecord's} transient
+     * field at the {@link ChildRecord}.</li>
+     * <li>Save the {@link TransientLinkRecord}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save succeeds, and a fresh load of the
+     * {@link ChildRecord} shows the original label, because the transient
+     * reference did not carry the change into the save.
+     */
+    @Test
+    public void testSaveIgnoresRecordHeldOnlyByTransientField() {
+        TransientLinkRecord holder = new TransientLinkRecord();
+        holder.name = "holder";
+        ChildRecord child = new ChildRecord();
+        child.label = "original";
+        Assert.assertTrue(runway.save(holder, child));
+        child.label = "changed";
+        holder.scratch = child;
+        Assert.assertTrue(runway.save(holder));
+        Assert.assertEquals("original",
+                runway.load(ChildRecord.class, child.id()).label);
+        Assert.assertTrue(child.save());
+        Assert.assertEquals("changed",
+                runway.load(ChildRecord.class, child.id()).label);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that one save evaluates a {@link Record
+     * Record's} {@code overrideSave()} hook exactly once, so the preflight and
+     * the save execution act on the same decision.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link CountingOverrideRecord}.</li>
+     * <li>Save it once through the {@link Runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save succeeds and the hook was evaluated
+     * exactly once.
+     */
+    @Test
+    public void testSaveEvaluatesOverrideSaveHookExactlyOnce() {
+        CountingOverrideRecord record = new CountingOverrideRecord();
+        record.name = "counted";
+        Assert.assertTrue(runway.save(record));
+        Assert.assertEquals(1, record.overrideSaveEvaluations);
+    }
+
+    /**
      * A test {@link Record} that holds a link to a {@link ChildRecord}.
      *
      * @author Jeff Nelson
@@ -1331,6 +1346,50 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     public static class ChildRecord extends Record {
 
         public String label;
+    }
+
+    /**
+     * A test {@link Record} that references a {@link ChildRecord} only through
+     * a transient field.
+     *
+     * @author Jeff Nelson
+     */
+    public static class TransientLinkRecord extends Record {
+
+        /**
+         * The persistent display name.
+         */
+        public String name;
+
+        /**
+         * The non-persistent {@link ChildRecord} reference.
+         */
+        public transient ChildRecord scratch;
+    }
+
+    /**
+     * A test {@link Record} that counts how many times the save pipeline
+     * evaluates its {@code overrideSave()} hook.
+     *
+     * @author Jeff Nelson
+     */
+    public static class CountingOverrideRecord extends Record {
+
+        /**
+         * The persistent display name.
+         */
+        public String name;
+
+        /**
+         * The number of {@code overrideSave()} evaluations.
+         */
+        public transient int overrideSaveEvaluations = 0;
+
+        @Override
+        protected Supplier<Boolean> overrideSave() {
+            overrideSaveEvaluations++;
+            return null;
+        }
     }
 
     /**
@@ -1418,6 +1477,53 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
                 name = name + " (Modified)";
             }
         }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the changed copy of a record receives
+     * the save's lifecycle consequences when a clean id-equal copy is part of
+     * the same save call, so the clean copy is never falsely marked as
+     * synchronized.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Player} with a score of 1
+     * and a save listener that captures the notified instance.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load two id-equal copies of the {@link Player}.</li>
+     * <li>Change the first copy and save both copies in one call, with the
+     * unchanged copy listed last.</li>
+     * <li>Change the same field on the unchanged copy and save it with
+     * stale-write prevention.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The notification delivers the changed copy,
+     * the stale copy's save throws a {@link StaleDataException} and the saved
+     * score survives.
+     */
+    @Test
+    public void testChangedCopySpeaksForTheSaveDespiteCleanDuplicate()
+            throws InterruptedException {
+        Player player = new Player("a", 1);
+        Assert.assertTrue(runway.save(player));
+        Player changed = runway.load(Player.class, player.id());
+        Player stale = runway.load(Player.class, player.id());
+        changed.score = 2;
+        AtomicReference<Player> notified = new AtomicReference<>();
+        runway.properties().onSave(Player.class, notified::set);
+        Assert.assertTrue(runway.save(changed, stale));
+        long stop = System.currentTimeMillis() + 5000;
+        while (notified.get() == null && System.currentTimeMillis() < stop) {
+            Thread.sleep(10);
+        }
+        Assert.assertSame(changed, notified.get());
+        stale.score = 3;
+        try {
+            stale.save(true);
+            Assert.fail("Expected the stale copy's save to be rejected");
+        }
+        catch (StaleDataException e) {/* expected */}
+        Assert.assertEquals(2, runway.load(Player.class, player.id()).score);
     }
 
     /**

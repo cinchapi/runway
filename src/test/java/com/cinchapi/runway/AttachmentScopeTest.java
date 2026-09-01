@@ -39,10 +39,20 @@ import com.cinchapi.concourse.thrift.Operator;
  */
 public class AttachmentScopeTest extends RunwayBaseClientServerTest {
 
-    // ========================================================================
-    // Basic Attach/Detach Tests
-    // ========================================================================
-
+    /**
+     * <strong>Goal:</strong> Verify that {@code attach} returns an
+     * {@link AttachmentScope} that serves the attached source's records.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * two {@link TestAdHocRecord TestAdHocRecords}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source and load through the returned scope.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both records are returned.
+     */
     @Test
     public void testAttachReturnsScopeThatServesAdHocRecords() {
         Collection<TestAdHocRecord> data = Arrays.asList(
@@ -57,6 +67,21 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that the original {@link Runway} handle
+     * serves an attached source's records while the scope is open.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * two {@link TestAdHocRecord TestAdHocRecords}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source and load through the {@link #runway} instead of the
+     * scope.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both records are returned.
+     */
     @Test
     public void testOriginalRunwayHandleServesAttachedSources() {
         Collection<TestAdHocRecord> data = Arrays.asList(
@@ -72,6 +97,22 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that the {@link AttachmentScope} and the
+     * {@link Runway} handle return the same results for the same query.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * three {@link TestAdHocRecord TestAdHocRecords}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source.</li>
+     * <li>Find records where {@code age > 28} through the scope and through the
+     * {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both queries return the same two records.
+     */
     @Test
     public void testBothHandlesReturnSameResults() {
         Collection<TestAdHocRecord> data = Arrays.asList(
@@ -95,6 +136,23 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that closing an {@link AttachmentScope}
+     * detaches its source.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * one {@link TestAdHocRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source in a try-with-resources block and load through the
+     * {@link #runway}.</li>
+     * <li>Load again after the block closes the scope.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The load inside the block returns the record;
+     * the load after the close returns nothing.
+     */
     @Test
     public void testAutoDetachOnClose() {
         Collection<TestAdHocRecord> data = Arrays
@@ -112,6 +170,22 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(results.isEmpty());
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code detach} removes an attached
+     * source before its scope closes.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * one {@link TestAdHocRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source and load through the {@link #runway}.</li>
+     * <li>Call {@code detach(source)} and load again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The load before the detach returns the record;
+     * the load after it returns nothing.
+     */
     @Test
     public void testManualDetach() {
         Collection<TestAdHocRecord> data = Arrays
@@ -133,6 +207,22 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         scope.close(); // Clean up
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code detach} by class removes the
+     * attached source for that class.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * one {@link TestAdHocRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source.</li>
+     * <li>Call {@code detach(TestAdHocRecord.class)} and load through the
+     * {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The load returns nothing.
+     */
     @Test
     public void testDetachByClass() {
         Collection<TestAdHocRecord> data = Arrays
@@ -151,6 +241,23 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         scope.close();
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that one {@code attach} call can attach
+     * multiple sources, and that closing the scope detaches all of them.
+     * <p>
+     * <strong>Start state:</strong> Two {@link AdHocDataSource
+     * AdHocDataSources} that serve different {@link AdHocRecord} types.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach both sources in a try-with-resources block and load each
+     * type.</li>
+     * <li>Load each type again after the block closes the scope.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both types load inside the block; neither
+     * loads after the close.
+     */
     @Test
     public void testMultipleSources() {
         Collection<TestAdHocRecord> data1 = Arrays
@@ -173,10 +280,23 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(runway.load(OtherAdHocRecord.class).isEmpty());
     }
 
-    // ========================================================================
-    // Persistent Record Integration Tests
-    // ========================================================================
-
+    /**
+     * <strong>Goal:</strong> Verify that an attached source does not disturb
+     * reads of persistent {@link Record Records}.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link Person} and an
+     * {@link AdHocDataSource} that supplies one {@link TestAdHocRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source.</li>
+     * <li>Load the {@link Person Persons} and the {@link TestAdHocRecord
+     * TestAdHocRecords} through the {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The persistent {@link Person} and the ad-hoc
+     * record both load.
+     */
     @Test
     public void testAttachedSourceDoesNotAffectPersistentRecords() {
         // Create a persistent record
@@ -202,10 +322,55 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
-    // ========================================================================
-    // Thread Isolation Tests
-    // ========================================================================
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Record} created through an
+     * {@link AttachmentScope} is bound to the underlying {@link Runway}, so a
+     * direct {@code save()} persists.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach an {@link AdHocDataSource} to the {@link #runway}.</li>
+     * <li>Call {@code create} on the returned {@link AttachmentScope}, set the
+     * name and {@code save()} the {@link Person} directly.</li>
+     * <li>Load the {@link Person} through the {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link Person} is durable with the saved
+     * name.
+     */
+    @Test
+    public void testCreateBindsRecordToUnderlyingRunway() {
+        AdHocDataSource<TestAdHocRecord> source = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> Arrays.asList());
 
+        try (AttachmentScope scope = runway.attach(source)) {
+            Person person = scope.create(Person.class);
+            person.name = "TestPerson";
+            Assert.assertTrue(person.save());
+            Assert.assertEquals("TestPerson",
+                    runway.load(Person.class, person.id()).name);
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an attached source is visible only to
+     * the thread that attached it.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * one {@link TestAdHocRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source on the main thread and load through the
+     * {@link #runway}.</li>
+     * <li>Load the same type from another thread.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The main thread sees the record; the other
+     * thread sees nothing.
+     */
     @Test
     public void testAttachedSourceIsThreadLocal() throws Exception {
         Collection<TestAdHocRecord> data = Arrays
@@ -238,6 +403,23 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         scope.close();
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that two threads can attach different
+     * sources for the same type without observing each other's data.
+     * <p>
+     * <strong>Start state:</strong> Two {@link AdHocDataSource
+     * AdHocDataSources} for {@link TestAdHocRecord} with different data.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach one source on another thread and the other source on the main
+     * thread.</li>
+     * <li>Load the type on each thread.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The main thread sees one record and the other
+     * thread sees two, each per its own source.
+     */
     @Test
     public void testDifferentThreadsCanHaveDifferentSources() throws Exception {
         Collection<TestAdHocRecord> data1 = Arrays
@@ -287,6 +469,23 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(Integer.valueOf(2), otherThreadResult.get());
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a detach on one thread does not detach
+     * another thread's attachment of the same source.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * one {@link TestAdHocRecord}, attached on two threads.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source on another thread and on the main thread.</li>
+     * <li>Close the main thread's scope.</li>
+     * <li>Load the type on both threads.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The main thread sees nothing after its close;
+     * the other thread still sees the record.
+     */
     @Test
     public void testDetachOnOneThreadDoesNotAffectAnother() throws Exception {
         Collection<TestAdHocRecord> data = Arrays
@@ -340,28 +539,21 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         otherThread.join(5000);
     }
 
-    // ========================================================================
-    // Query Method Coverage Tests
-    // ========================================================================
-
-    @Test
-    public void testFindWithCriteria() {
-        Collection<TestAdHocRecord> data = Arrays.asList(
-                new TestAdHocRecord("Alice", 30),
-                new TestAdHocRecord("Bob", 25),
-                new TestAdHocRecord("Charlie", 35));
-        AdHocDataSource<TestAdHocRecord> source = new AdHocDataSource<>(
-                TestAdHocRecord.class, () -> data);
-
-        try (AttachmentScope scope = runway.attach(source)) {
-            Criteria criteria = Criteria.where().key("age")
-                    .operator(Operator.GREATER_THAN).value(28).build();
-            Set<TestAdHocRecord> results = scope.find(TestAdHocRecord.class,
-                    criteria);
-            Assert.assertEquals(2, results.size());
-        }
-    }
-
+    /**
+     * <strong>Goal:</strong> Verify that {@code findUnique} matches attached
+     * records.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * two {@link TestAdHocRecord TestAdHocRecords} with distinct names.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source and call {@code findUnique} with
+     * {@code name = "Alice"} through the {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned record is Alice.
+     */
     @Test
     public void testFindUnique() {
         Collection<TestAdHocRecord> data = Arrays.asList(
@@ -380,6 +572,21 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code loadAny} matches attached
+     * records through a superclass.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * two {@link TestAdHocRecord TestAdHocRecords}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source and call {@code loadAny(AdHocRecord.class)} through
+     * the {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both records are returned.
+     */
     @Test
     public void testLoadAnyWithHierarchy() {
         Collection<TestAdHocRecord> data = Arrays.asList(
@@ -394,6 +601,21 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code count} includes attached
+     * records.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * three {@link TestAdHocRecord TestAdHocRecords}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source and call {@code count(TestAdHocRecord.class)}
+     * through the {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The count is 3.
+     */
     @Test
     public void testCountWithAttachedSource() {
         Collection<TestAdHocRecord> data = Arrays.asList(
@@ -409,6 +631,21 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code countAny} counts attached
+     * records through a superclass.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * two {@link TestAdHocRecord TestAdHocRecords}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source and call {@code countAny(AdHocRecord.class)}
+     * through the {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The count is 2.
+     */
     @Test
     public void testCountAnyWithHierarchy() {
         Collection<TestAdHocRecord> data = Arrays.asList(
@@ -423,10 +660,22 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
-    // ========================================================================
-    // Multiple Sources in Same Hierarchy Tests
-    // ========================================================================
-
+    /**
+     * <strong>Goal:</strong> Verify that {@code loadAny} aggregates attached
+     * records from multiple sources in the same hierarchy.
+     * <p>
+     * <strong>Start state:</strong> Two attached {@link AdHocDataSource
+     * AdHocDataSources} that serve different {@link AdHocRecord} subclasses,
+     * with two and three records.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach both sources and call {@code loadAny(AdHocRecord.class)}
+     * through the {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> All five records are returned.
+     */
     @Test
     public void testLoadAnyWithMultipleSourcesInHierarchy() {
         // Two different AdHocRecord subclasses
@@ -452,6 +701,22 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code findAny} evaluates a
+     * {@link Criteria} across multiple attached sources in the same hierarchy.
+     * <p>
+     * <strong>Start state:</strong> Two attached {@link AdHocDataSource
+     * AdHocDataSources} that serve different {@link AdHocRecord} subclasses.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach both sources and call {@code findAny} with
+     * {@code name = "Alice"} through the {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Only the one record whose {@code name} field
+     * matches is returned.
+     */
     @Test
     public void testFindAnyWithMultipleSourcesInHierarchy() {
         Collection<TestAdHocRecord> testData = Arrays.asList(
@@ -477,6 +742,23 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code findAny} evaluates a
+     * {@link Criteria} on a field only one attached type declares.
+     * <p>
+     * <strong>Start state:</strong> Two attached {@link AdHocDataSource
+     * AdHocDataSources} that serve different {@link AdHocRecord} subclasses;
+     * only {@link TestAdHocRecord} declares {@code age}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach both sources and call {@code findAny} with {@code age < 30}
+     * through the {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Only the one record whose {@code age} field
+     * matches is returned.
+     */
     @Test
     public void testFindAnyWithMultipleSourcesInHierarchyAlt() {
         Collection<TestAdHocRecord> testData = Arrays.asList(
@@ -502,6 +784,22 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code countAny} aggregates counts
+     * from multiple attached sources in the same hierarchy.
+     * <p>
+     * <strong>Start state:</strong> Two attached {@link AdHocDataSource
+     * AdHocDataSources} that serve different {@link AdHocRecord} subclasses,
+     * with two and three records.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach both sources and call {@code countAny(AdHocRecord.class)}
+     * through the {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The count is 5.
+     */
     @Test
     public void testCountAnyWithMultipleSourcesInHierarchy() {
         Collection<TestAdHocRecord> testData = Arrays.asList(
@@ -523,6 +821,21 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code loadAny} works when the
+     * hierarchy has a single attached source.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * one {@link TestAdHocRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source and call {@code loadAny(AdHocRecord.class)} through
+     * the {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The record is returned.
+     */
     @Test
     public void testLoadAnyWithSingleSourceStillWorks() {
         // Regression test: single source in hierarchy should still work
@@ -537,10 +850,21 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
-    // ========================================================================
-    // Multiple Sources for Same Type Tests
-    // ========================================================================
-
+    /**
+     * <strong>Goal:</strong> Verify that {@code load} aggregates records from
+     * multiple attached sources for the same type.
+     * <p>
+     * <strong>Start state:</strong> Two attached {@link AdHocDataSource
+     * AdHocDataSources} for {@link TestAdHocRecord}, each with two records.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach both sources and call {@code load(TestAdHocRecord.class)}
+     * through the {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> All four records are returned.
+     */
     @Test
     public void testMultipleSourcesForSameTypeAggregatesResults() {
         // Two separate data sources for the same AdHocRecord type
@@ -571,6 +895,21 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Criteria} find aggregates
+     * matching records from multiple attached sources for the same type.
+     * <p>
+     * <strong>Start state:</strong> Two attached {@link AdHocDataSource
+     * AdHocDataSources} for {@link TestAdHocRecord}, each with two records.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach both sources and find records where {@code age > 27} through
+     * the {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The three matching records are returned.
+     */
     @Test
     public void testMultipleSourcesForSameTypeFindAggregatesResults() {
         Collection<TestAdHocRecord> data1 = Arrays.asList(
@@ -597,6 +936,22 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code count} aggregates counts from
+     * multiple attached sources for the same type.
+     * <p>
+     * <strong>Start state:</strong> Two attached {@link AdHocDataSource
+     * AdHocDataSources} for {@link TestAdHocRecord}, with two records and one
+     * record.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach both sources and call {@code count(TestAdHocRecord.class)}
+     * through the {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The count is 3.
+     */
     @Test
     public void testMultipleSourcesForSameTypeCountAggregates() {
         Collection<TestAdHocRecord> data1 = Arrays.asList(
@@ -616,6 +971,23 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a load with an {@link Order} and a
+     * {@link Page} sorts and paginates across multiple attached sources for the
+     * same type.
+     * <p>
+     * <strong>Start state:</strong> Two attached {@link AdHocDataSource
+     * AdHocDataSources} for {@link TestAdHocRecord}, each with two records in
+     * non-sorted order.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach both sources and load, sorted by {@code name} ascending, with
+     * the first page of two.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The page holds Alice and Bob, in that order.
+     */
     @Test
     public void testMultipleSourcesForSameTypeWithSortingAndPagination() {
         Collection<TestAdHocRecord> data1 = Arrays.asList(
@@ -648,10 +1020,21 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
-    // ========================================================================
-    // Additional Coverage Tests
-    // ========================================================================
-
+    /**
+     * <strong>Goal:</strong> Verify that {@code findAnyUnique} matches an
+     * attached record through a superclass.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * two {@link TestAdHocRecord TestAdHocRecords} with distinct names.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source and call {@code findAnyUnique} with
+     * {@code name = "Alice"} through the {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned record is Alice.
+     */
     @Test
     public void testFindAnyUniqueWithAttachedSource() {
         Collection<TestAdHocRecord> data = Arrays.asList(
@@ -671,6 +1054,21 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code findAnyUnique} matches an
+     * attached record when multiple sources serve the hierarchy.
+     * <p>
+     * <strong>Start state:</strong> Two attached {@link AdHocDataSource
+     * AdHocDataSources} that serve different {@link AdHocRecord} subclasses.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach both sources and call {@code findAnyUnique} with
+     * {@code name = "Alice"} through the {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned record is Alice.
+     */
     @Test
     public void testFindAnyUniqueWithMultipleSourcesInHierarchy() {
         Collection<TestAdHocRecord> testData = Arrays
@@ -693,6 +1091,22 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a load by id resolves against an
+     * attached source.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * two {@link TestAdHocRecord TestAdHocRecords}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source.</li>
+     * <li>Load one record by its id, then load a nonexistent id.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The first load returns Alice; the second
+     * returns {@code null}.
+     */
     @Test
     public void testLoadByIdWithAttachedSource() {
         TestAdHocRecord alice = new TestAdHocRecord("Alice", 30);
@@ -715,14 +1129,35 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code loadAny} with an {@link Order}
+     * sorts records that come from different attached sources.
+     * <p>
+     * <strong>Start state:</strong> Two attached {@link AdHocDataSource
+     * AdHocDataSources} that serve different {@link AdHocRecord} subclasses;
+     * the first supplies its named records out of sorted order and the second
+     * supplies records with no {@code name} field.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Supply Bob before Alice so an ignored {@link Order} returns the
+     * records in attach order instead of sorted order.</li>
+     * <li>Attach both sources and call {@code loadAny(AdHocRecord.class)}
+     * sorted by {@code name} ascending.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> All four records return in the order Alice,
+     * Bob, Charlie, Dave.
+     */
     @Test
     public void testLoadAnyWithSortingAcrossMultipleSources() {
-        // Create records with ages that interleave when sorted
+        // Supply the named records out of order so the assertion fails
+        // when the Order is dropped and results come back in attach order
         Collection<TestAdHocRecord> testData = Arrays.asList(
-                new TestAdHocRecord("Alice", 30),
-                new TestAdHocRecord("Bob", 20));
+                new TestAdHocRecord("Bob", 20),
+                new TestAdHocRecord("Alice", 30));
         Collection<OtherAdHocRecord> otherData = Arrays.asList(
-                new OtherAdHocRecord("Charlie"), // no age field
+                new OtherAdHocRecord("Charlie"), // no name field
                 new OtherAdHocRecord("Dave"));
 
         AdHocDataSource<TestAdHocRecord> source1 = new AdHocDataSource<>(
@@ -749,6 +1184,22 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code loadAny} with a {@link Page}
+     * paginates the aggregate of multiple attached sources.
+     * <p>
+     * <strong>Start state:</strong> Two attached {@link AdHocDataSource
+     * AdHocDataSources} that serve different {@link AdHocRecord} subclasses,
+     * with two and three records.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach both sources and call {@code loadAny(AdHocRecord.class)} for
+     * the second page of two.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Two records are returned.
+     */
     @Test
     public void testLoadAnyWithPaginationAcrossMultipleSources() {
         Collection<TestAdHocRecord> testData = Arrays.asList(
@@ -772,6 +1223,24 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code findAny} applies a
+     * {@link Criteria}, an {@link Order} and a {@link Page} together across
+     * attached sources.
+     * <p>
+     * <strong>Start state:</strong> Two attached {@link AdHocDataSource
+     * AdHocDataSources} that serve different {@link AdHocRecord} subclasses;
+     * three {@link TestAdHocRecord TestAdHocRecords} match the criteria.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach both sources and call {@code findAny} with a match-all name
+     * criteria, sorted by {@code name} ascending, for the first page of
+     * two.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The page holds Alice and Bob, in that order.
+     */
     @Test
     public void testFindAnyWithSortingAndPaginationAcrossMultipleSources() {
         Collection<TestAdHocRecord> testData = Arrays.asList(
@@ -806,6 +1275,22 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that the {@code findAny} overload with a
+     * {@link Criteria} and an {@link Order} applies the order.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * three {@link TestAdHocRecord TestAdHocRecords} in non-sorted order.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source and call {@code findAny} with {@code age > 0}
+     * sorted by {@code name} ascending.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> All three records return in the order Alice,
+     * Bob, Charlie.
+     */
     @Test
     public void testFindAnyWithCriteriaAndOrderAppliesOrder() {
         // Regression test: findAny(Class, Criteria, Order) was ignoring order
@@ -837,18 +1322,59 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
-    // ========================================================================
-    // Test Record Classes
-    // ========================================================================
+    /**
+     * <strong>Goal:</strong> Verify that a realm-scoped load still serves every
+     * record from an attached {@link AdHocDataSource}, because realm
+     * constraints do not apply to ad-hoc data.
+     * <p>
+     * <strong>Start state:</strong> An attached {@link AdHocDataSource} that
+     * supplies two {@link TestAdHocRecord TestAdHocRecords}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source and load {@link TestAdHocRecord TestAdHocRecords}
+     * scoped to the {@code prod} realm.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both supplier records are returned.
+     */
+    @Test
+    public void testRealmScopedLoadStillServesAttachedRecords() {
+        Collection<TestAdHocRecord> data = Arrays.asList(
+                new TestAdHocRecord("Alice", 30),
+                new TestAdHocRecord("Bob", 25));
+        AdHocDataSource<TestAdHocRecord> source = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> data);
+        try (AttachmentScope scope = runway.attach(source)) {
+            Set<TestAdHocRecord> results = runway.load(TestAdHocRecord.class,
+                    Realms.only("prod"));
+            Assert.assertEquals(2, results.size());
+        }
+    }
 
     /**
      * A mock {@link AdHocRecord} for testing.
+     *
+     * @author Jeff Nelson
      */
     static class TestAdHocRecord extends AdHocRecord {
 
+        /**
+         * The display name.
+         */
         String name;
+
+        /**
+         * The age.
+         */
         int age;
 
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         * @param age the age
+         */
         TestAdHocRecord(String name, int age) {
             this.name = name;
             this.age = age;
@@ -857,11 +1383,21 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
 
     /**
      * Another mock {@link AdHocRecord} for testing multiple sources.
+     *
+     * @author Jeff Nelson
      */
     static class OtherAdHocRecord extends AdHocRecord {
 
+        /**
+         * An arbitrary value.
+         */
         String value;
 
+        /**
+         * Construct a new instance.
+         *
+         * @param value an arbitrary value
+         */
         OtherAdHocRecord(String value) {
             this.value = value;
         }
@@ -869,10 +1405,19 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
 
     /**
      * A persistent {@link Record} for integration testing.
+     *
+     * @author Jeff Nelson
      */
     static class Person extends Record {
 
+        /**
+         * The display name.
+         */
         String name;
+
+        /**
+         * The age.
+         */
         int age;
     }
 

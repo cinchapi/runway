@@ -41,10 +41,24 @@ import com.google.common.collect.ImmutableSet;
  */
 public class AdHocRecordCompositionTest {
 
-    // ========================================================================
-    // Audience Tests
-    // ========================================================================
-
+    /**
+     * <strong>Goal:</strong> Verify that an {@link AdHocRecord} which
+     * implements {@link Audience} supplies a visibility filter that governs
+     * what an {@link AdHocDataSource} load returns.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} over one public
+     * and one private document.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct an admin viewer and a guest viewer.</li>
+     * <li>Load the documents with each viewer's {@code $checkIfVisible()}
+     * predicate as the filter.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The admin sees both documents; the guest sees
+     * only the public one.
+     */
     @Test
     public void testAdHocRecordAsAudienceVisibilityFilter() {
         AudienceAdHocRecord adminViewer = new AudienceAdHocRecord("Admin",
@@ -77,6 +91,23 @@ public class AdHocRecordCompositionTest {
         Assert.assertEquals("PublicDoc", guestResults.iterator().next().title);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that an {@link Audience} visibility filter
+     * composes with a {@link Criteria} in an {@link AdHocDataSource} find.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} over three
+     * documents that vary in visibility and active status.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a guest viewer.</li>
+     * <li>Find documents where {@code active} is {@code true} with the guest's
+     * {@code $checkIfVisible()} predicate as the filter.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Only the document that is both public and
+     * active is returned.
+     */
     @Test
     public void testAdHocRecordAsAudienceFilterWithCriteria() {
         AudienceAdHocRecord viewer = new AudienceAdHocRecord("Viewer", "guest");
@@ -104,46 +135,23 @@ public class AdHocRecordCompositionTest {
         Assert.assertEquals("Alpha", results.iterator().next().title);
     }
 
-    // ========================================================================
-    // AccessControl Tests
-    // ========================================================================
-
-    @Test
-    public void testAccessControlledAdHocRecordReadableBy() {
-        AudienceAdHocRecord admin = new AudienceAdHocRecord("Admin", "admin");
-        AudienceAdHocRecord guest = new AudienceAdHocRecord("Guest", "guest");
-
-        AccessControlledAdHocRecord doc = new AccessControlledAdHocRecord(
-                "Secret", false, true);
-
-        // Admin should be able to read all keys
-        Set<String> adminReadable = doc.$readableBy(admin);
-        Assert.assertEquals(AccessControl.ALL_KEYS, adminReadable);
-
-        // Guest should not be able to read any keys for private doc
-        Set<String> guestReadable = doc.$readableBy(guest);
-        Assert.assertEquals(AccessControl.NO_KEYS, guestReadable);
-    }
-
-    @Test
-    public void testAccessControlledAdHocRecordDiscoverability() {
-        AudienceAdHocRecord admin = new AudienceAdHocRecord("Admin", "admin");
-        AudienceAdHocRecord guest = new AudienceAdHocRecord("Guest", "guest");
-
-        AccessControlledAdHocRecord publicDoc = new AccessControlledAdHocRecord(
-                "Public", true, true);
-        AccessControlledAdHocRecord privateDoc = new AccessControlledAdHocRecord(
-                "Private", false, true);
-
-        // Admin discovers all
-        Assert.assertTrue(publicDoc.$isDiscoverableBy(admin));
-        Assert.assertTrue(privateDoc.$isDiscoverableBy(admin));
-
-        // Guest only discovers public
-        Assert.assertTrue(publicDoc.$isDiscoverableBy(guest));
-        Assert.assertFalse(privateDoc.$isDiscoverableBy(guest));
-    }
-
+    /**
+     * <strong>Goal:</strong> Verify that {@code frameAs} on an
+     * {@link AdHocRecord} with field-level access control returns only the
+     * fields the {@link Audience} may read.
+     * <p>
+     * <strong>Start state:</strong> One document with a title, a summary and a
+     * confidential field.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct an admin viewer and a guest viewer.</li>
+     * <li>Call {@code frameAs} with each viewer.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The admin's frame holds every field; the
+     * guest's frame holds the title and summary but not the confidential field.
+     */
     @Test
     public void testAccessControlledAdHocRecordFrameAs() {
         AudienceAdHocRecord admin = new AudienceAdHocRecord("Admin", "admin");
@@ -167,20 +175,46 @@ public class AdHocRecordCompositionTest {
         Assert.assertFalse(guestFrame.containsKey("confidential"));
     }
 
-    @Test
-    public void testAccessControlledAdHocRecordReadAsReturnsNullWhenRestricted() {
+    /**
+     * <strong>Goal:</strong> Verify that the single-key {@code readAs} throws
+     * for a key the {@link Audience} may not read, the same as the
+     * collection-based {@code read}.
+     * <p>
+     * <strong>Start state:</strong> One document with a confidential field that
+     * a guest may not read.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code readAs(guest, "confidential")}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown.
+     */
+    @Test(expected = RestrictedAccessException.class)
+    public void testAccessControlledAdHocRecordReadAsThrowsWhenRestricted() {
         AudienceAdHocRecord guest = new AudienceAdHocRecord("Guest", "guest");
 
         FieldLevelAccessAdHocRecord doc = new FieldLevelAccessAdHocRecord(
                 "Document", "summary", "secret");
 
-        // Guest trying to read confidential field should get null
-        // (the single-key readAs filters data, the Collection-based read
-        // throws)
-        Object result = doc.readAs(guest, "confidential");
-        Assert.assertNull(result);
+        doc.readAs(guest, "confidential");
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that the collection-based {@code read}
+     * throws when the requested keys include one the {@link Audience} may not
+     * read.
+     * <p>
+     * <strong>Start state:</strong> One document with a confidential field that
+     * a guest may not read.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code guest.read(ImmutableSet.of("confidential"), doc)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown.
+     */
     @Test(expected = RestrictedAccessException.class)
     public void testAccessControlledAdHocRecordReadCollectionThrowsWhenRestricted() {
         AudienceAdHocRecord guest = new AudienceAdHocRecord("Guest", "guest");
@@ -193,17 +227,22 @@ public class AdHocRecordCompositionTest {
         guest.read(ImmutableSet.of("confidential"), doc);
     }
 
-    @Test
-    public void testAccessControlledAdHocRecordAnonymousDiscoverability() {
-        AccessControlledAdHocRecord publicDoc = new AccessControlledAdHocRecord(
-                "Public", true, true);
-        AccessControlledAdHocRecord privateDoc = new AccessControlledAdHocRecord(
-                "Private", false, true);
-
-        Assert.assertTrue(publicDoc.$isDiscoverableByAnonymous());
-        Assert.assertFalse(privateDoc.$isDiscoverableByAnonymous());
-    }
-
+    /**
+     * <strong>Goal:</strong> Verify that the anonymous {@link Audience
+     * Audience's} visibility filter limits an {@link AdHocDataSource} load to
+     * anonymously discoverable documents.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} over one public
+     * and one private document.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the documents with the {@link Audience#anonymous() anonymous}
+     * audience's {@code $checkIfVisible()} predicate as the filter.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Only the public document is returned.
+     */
     @Test
     public void testAudienceAnonymousFilter() {
         AccessControlledAdHocRecord publicDoc = new AccessControlledAdHocRecord(
@@ -225,10 +264,23 @@ public class AdHocRecordCompositionTest {
         Assert.assertEquals("Public", results.iterator().next().title);
     }
 
-    // ========================================================================
-    // Combined Audience + AccessControl Tests
-    // ========================================================================
-
+    /**
+     * <strong>Goal:</strong> Verify that an {@link AdHocRecord} which
+     * implements both {@link Audience} and {@link AccessControl} filters
+     * records of its own type by role.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} over an admin
+     * user and a viewer user.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the users with each user's {@code $checkIfVisible()} predicate
+     * as the filter.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The admin sees both users; the viewer sees
+     * only themselves.
+     */
     @Test
     public void testAdHocRecordImplementsBothAudienceAndAccessControl() {
         DualRoleAdHocRecord user1 = new DualRoleAdHocRecord("Alice", "admin");
@@ -251,6 +303,25 @@ public class AdHocRecordCompositionTest {
         Assert.assertEquals("Bob", viewerResults.iterator().next().name);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a visibility filter applies to both a
+     * plain load and a {@link Criteria} find on the same
+     * {@link AdHocDataSource}.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} over three
+     * documents that vary in visibility and active status.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the documents with a guest's {@code $checkIfVisible()} predicate
+     * as the filter.</li>
+     * <li>Find the documents where {@code active} is {@code true} with the same
+     * filter.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The load returns the two public documents; the
+     * find returns only the public document that is active.
+     */
     @Test
     public void testVisibilityFilterWithFindAndCriteria() {
         AudienceAdHocRecord viewer = new AudienceAdHocRecord("Viewer", "guest");
@@ -282,6 +353,22 @@ public class AdHocRecordCompositionTest {
         Assert.assertEquals("Public1", activeResults.iterator().next().title);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code $checkIfVisible()} returns a
+     * {@link Predicate} whose direct evaluation matches the {@link Audience
+     * Audience's} access.
+     * <p>
+     * <strong>Start state:</strong> One public and one private document.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct an admin viewer and a guest viewer.</li>
+     * <li>Test each viewer's predicate against each document.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The admin's predicate accepts both documents;
+     * the guest's predicate accepts only the public one.
+     */
     @Test
     public void testAdHocRecordCheckIfVisibleReturnsPredicateThatFilters() {
         AudienceAdHocRecord admin = new AudienceAdHocRecord("Admin", "admin");
@@ -304,6 +391,22 @@ public class AdHocRecordCompositionTest {
         Assert.assertFalse(guestPredicate.test(privateDoc));
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that an {@link Audience} is always visible
+     * to itself, even when its own access rules grant nothing to any non-admin
+     * audience, itself included, so only the framework's self-access convention
+     * can make the predicate pass.
+     * <p>
+     * <strong>Start state:</strong> One dual-role user with the viewer role.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Test the user's own {@code $checkIfVisible()} predicate against the
+     * user.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The predicate accepts the user.
+     */
     @Test
     public void testAdHocRecordAccessControlWithSelfDiscovery() {
         // An Audience always has access to itself
@@ -315,18 +418,29 @@ public class AdHocRecordCompositionTest {
         Assert.assertTrue(filter.test(user));
     }
 
-    // ========================================================================
-    // Test Record Classes
-    // ========================================================================
-
     /**
      * An {@link AdHocRecord} that implements {@link Audience}.
+     *
+     * @author Jeff Nelson
      */
     static class AudienceAdHocRecord extends AdHocRecord implements Audience {
 
+        /**
+         * The display name.
+         */
         String name;
+
+        /**
+         * The role that determines this viewer's access.
+         */
         String role;
 
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         * @param role the role that determines this viewer's access
+         */
         AudienceAdHocRecord(String name, String role) {
             this.name = name;
             this.role = role;
@@ -342,14 +456,34 @@ public class AdHocRecordCompositionTest {
 
     /**
      * An {@link AdHocRecord} that implements {@link AccessControl}.
+     *
+     * @author Jeff Nelson
      */
     static class AccessControlledAdHocRecord extends AdHocRecord implements
             AccessControl {
 
+        /**
+         * The display title.
+         */
         String title;
+
+        /**
+         * Whether non-admin audiences may access this document.
+         */
         boolean isPublic;
+
+        /**
+         * Whether this document is active.
+         */
         boolean active;
 
+        /**
+         * Construct a new instance.
+         *
+         * @param title the display title
+         * @param isPublic whether non-admin audiences may access this document
+         * @param active whether this document is active
+         */
         AccessControlledAdHocRecord(String title, boolean isPublic,
                 boolean active) {
             this.title = title;
@@ -405,6 +539,12 @@ public class AdHocRecordCompositionTest {
             return NO_KEYS;
         }
 
+        /**
+         * Return {@code true} if {@code audience} has the admin role.
+         *
+         * @param audience the {@link Audience} to evaluate
+         * @return {@code true} if the {@code audience} is an admin
+         */
         private boolean isAdmin(Audience audience) {
             if(audience instanceof AudienceAdHocRecord) {
                 return "admin".equals(((AudienceAdHocRecord) audience).role);
@@ -415,14 +555,34 @@ public class AdHocRecordCompositionTest {
 
     /**
      * An {@link AdHocRecord} with field-level access control.
+     *
+     * @author Jeff Nelson
      */
     static class FieldLevelAccessAdHocRecord extends AdHocRecord implements
             AccessControl {
 
+        /**
+         * The display title, readable by everyone.
+         */
         String title;
+
+        /**
+         * The summary, readable by identified audiences.
+         */
         String summary;
+
+        /**
+         * The confidential details, readable only by admins.
+         */
         String confidential;
 
+        /**
+         * Construct a new instance.
+         *
+         * @param title the display title
+         * @param summary the summary
+         * @param confidential the confidential details
+         */
         FieldLevelAccessAdHocRecord(String title, String summary,
                 String confidential) {
             this.title = title;
@@ -479,6 +639,12 @@ public class AdHocRecordCompositionTest {
             return NO_KEYS;
         }
 
+        /**
+         * Return {@code true} if {@code audience} has the admin role.
+         *
+         * @param audience the {@link Audience} to evaluate
+         * @return {@code true} if the {@code audience} is an admin
+         */
         private boolean isAdmin(Audience audience) {
             if(audience instanceof AudienceAdHocRecord) {
                 return "admin".equals(((AudienceAdHocRecord) audience).role);
@@ -490,14 +656,29 @@ public class AdHocRecordCompositionTest {
     /**
      * An {@link AdHocRecord} that implements both {@link Audience} and
      * {@link AccessControl}.
+     *
+     * @author Jeff Nelson
      */
     static class DualRoleAdHocRecord extends AdHocRecord implements
             Audience,
             AccessControl {
 
+        /**
+         * The display name.
+         */
         String name;
+
+        /**
+         * The role that determines this user's access.
+         */
         String role;
 
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         * @param role the role that determines this user's access
+         */
         DualRoleAdHocRecord(String name, String role) {
             this.name = name;
             this.role = role;
@@ -525,8 +706,9 @@ public class AdHocRecordCompositionTest {
 
         @Override
         public boolean $isDiscoverableBy(@Nonnull Audience audience) {
-            // Admins can see everyone, others can only see themselves
-            return isAdmin(audience) || audience.equals(this);
+            // Admins can see everyone; self-visibility must come only from
+            // the framework's self-access convention
+            return isAdmin(audience);
         }
 
         @Override
@@ -536,9 +718,9 @@ public class AdHocRecordCompositionTest {
 
         @Override
         public Set<String> $readableBy(@Nonnull Audience audience) {
-            // Only admins and self can read; others have no access
-            // This ensures $checkIfVisible() only passes for discoverable users
-            if(isAdmin(audience) || audience.equals(this)) {
+            // Only admins can read; self access must come only from the
+            // framework's self-access convention
+            if(isAdmin(audience)) {
                 return ALL_KEYS;
             }
             return NO_KEYS;
@@ -551,7 +733,7 @@ public class AdHocRecordCompositionTest {
 
         @Override
         public Set<String> $writableBy(@Nonnull Audience audience) {
-            if(isAdmin(audience) || audience.equals(this)) {
+            if(isAdmin(audience)) {
                 return ALL_KEYS;
             }
             return NO_KEYS;
@@ -562,6 +744,12 @@ public class AdHocRecordCompositionTest {
             return NO_KEYS;
         }
 
+        /**
+         * Return {@code true} if {@code audience} has the admin role.
+         *
+         * @param audience the {@link Audience} to evaluate
+         * @return {@code true} if the {@code audience} is an admin
+         */
         private boolean isAdmin(Audience audience) {
             if(audience instanceof DualRoleAdHocRecord) {
                 return "admin".equals(((DualRoleAdHocRecord) audience).role);

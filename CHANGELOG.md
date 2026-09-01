@@ -1,5 +1,177 @@
 # Changelog
 
+#### Version 2.3.0 (September 1, 2026)
+Runway 2.3.0 makes concurrent work safe. A new Transaction API scopes any combination of reads and writes to one ACID transaction. Saves now write only what changed, and a save can verify the values a decision rests on. Atomic operations resolve records by their unique identity, and every `Audience`, including the anonymous one, is now a full database participant.
+
+##### Transaction API
+Runway previously offered no way to guarantee atomicity or full ACID compliance across an ad hoc combination of reads and writes. Each save committed atomically, but a decision made on loaded data could not be guaranteed to still hold when it was written. The Transaction API provides that guarantee. It opens a window to the full power of Concourse transactions, including serializable isolation and atomic multi-operation commits, without a raw Concourse connection.
+
+* **`Runway#startTransaction` starts a `Transaction`.** `startTransaction()` returns a `DatabaseInterface` view that scopes every read and write to a single ACID transaction.
+    * Reads observe the transaction's isolated snapshot, including its own uncommitted writes; no reader outside the transaction can observe a staged write before the commit.
+    * Reads join the transaction's conflict footprint, so a commit fails instead of persisting a decision that was made on data a concurrent writer changed.
+* **A transaction owns its records exclusively.** Every `Record` loaded or created through the view is bound to the transaction, along with the records linked from it. `save()` stages within the transaction, and the writes become durable only when `commit()` succeeds.
+    * While the transaction is open, a bound record can only be read, written or deleted through it. Any other path to the record (a direct save, a save or deletion that reaches it through another record, or `Record#assign`) is refused with an `IllegalStateException`.
+    * The single-key atomic operations (`exchange`, `getAndUpdate` and `updateAndGet`) on a bound record resolve within the transaction. The value the operation reads joins the conflict footprint, the write stages, and both become durable only when the commit succeeds. After the transaction ends, the operations resume against the enclosing `Runway`.
+        * `getAndUpdate` and `updateAndGet` re-read the current value through the transaction and apply the update once, without a retry loop.
+        * `exchange` answers against the snapshot, so a `true` holds only if the transaction commits.
+        * A conflict with a concurrent writer surfaces as a `TransactionException` at the operation or fails the commit.
+        * After an abort, a record that the database holds keeps the replacement in memory without treating it as an unsaved change. `getAndUpdate` and `updateAndGet` self-correct on their next call, and a later save writes only the caller's own edits.
+    * Access-controlled operations and lazy `DeferredReference` loads on a bound record resolve within the transaction, so they observe the snapshot and join the conflict footprint.
+    * A record that is not bound to the transaction operates against its own scope, even while the transaction is open.
+* **`create` constructs a `Record` bound to the creating scope.** The new `DatabaseInterface#create` returns a `Record` whose direct save persists within the scope that created it: a `Runway`, a `Transaction` or an `Audience`. The created `Record`, and every `Record` reachable from its constructor arguments, is bound to that scope. Creation is an optional operation; an implementation that cannot support it refuses with an `UnsupportedOperationException`.
+* **`Transaction` is `AutoCloseable` and thread-confined.** `close()` aborts whatever was not committed, so a try-with-resources block guarantees a clean end. Only the thread that starts a transaction may use it.
+    * An abort discards every staged write; a record's in-memory edits remain, so the caller can retry.
+    * Save and delete notifications fire only after a successful commit.
+    * After a transaction ends, the view and its bound records operate against the enclosing `Runway` again; only another `commit()` and new hook registrations are refused.
+* **A failed save poisons the transaction.** A save that throws after it begins writing can never commit. Every subsequent operation is refused except `abort()` (or `close()`) and `afterAbort` registration, so a partial save never becomes durable.
+    * A save that refuses data throws `SuppressedRunwayException`, which carries the refusal. It cannot report the refusal by returning `false`, the way a `Runway`-bound save does, because what it staged cannot be selectively undone. Every other failure propagates as itself.
+    * A save that is refused before it begins (an invalid argument) leaves the transaction usable.
+* **A deletion is final within a transaction.** Once a save deletes a record, no later save in the same transaction can bring it back, references to it are removed at commit, and its delete notification fires once.
+* **`Runway#transact` and `Runway#transactAndSupply` execute work within a managed transaction.** The work receives a `TransactionInterface`: `transact` for work with no result, and `transactAndSupply` for work that returns one. The commit happens after the work completes.
+    * The view withholds `commit`, `abort` and `close`, so the work cannot end the transaction it joins.
+    * Conflicts retry within the bounds of the governing `AtomicRetryPolicy`, so the work must be free of side effects outside of the transaction; `RetryExhaustedException` carries the final conflict as its cause.
+* **`Record#transact` and `Record#transactAndSupply` execute work in the record's scope.** These methods let a `Record` perform an atomic combination of reads and writes. Within an open transaction the work joins it; otherwise, the work runs in its own managed transaction, the same as `Runway#transact` and `Runway#transactAndSupply`.
+* **An `Audience` starts and scopes transactions.** `Audience#startTransaction` returns an open `Transaction` that behaves the same as the audience, just within the confines of the transaction: reads observe the audience's visibility and writes require its permissions.
+    * The caller owns the transaction's lifecycle; after the transaction ends, the audience operates against the enclosing `Runway` again.
+    * If the audience later joins a different `Transaction`, then a database operation on a view from the earlier transaction is refused with an `IllegalStateException` instead of following the audience into the new scope.
+    * `Audience#transact` and `Audience#transactAndSupply` execute work in the audience's transactional scope, the same as `Record#transact` and `Record#transactAndSupply`; the work receives a view with the same audience behavior.
+* **The `Transactional` interface names a construct that can start and scope transactions.** `Runway`, `Audience`, and every transaction view implement it.
+    * A `Transaction` is itself `Transactional`: `transact` and `transactAndSupply` on an open `Transaction` join it, and `startTransaction` within an open `Transaction` is refused because transactions do not nest. After the transaction ends, both fall through to the enclosing `Runway`.
+* **`Transaction#afterCommit` and `Transaction#afterAbort` schedule outcome-dependent side effects.** An `afterCommit` hook runs once, only after the transaction successfully commits, and never for an attempt that a conflict retry discards. An `afterAbort` hook runs when the transaction ends without a successful commit. Hooks run synchronously in registration order, and a hook that throws does not change the transaction's outcome.
+
+##### Saves and Concurrent Writers
+Three changes govern how a save interacts with concurrent writers. A save now writes only what changed, the stale-write check covers exactly what a save writes, and a save can verify the values a decision rests on. A `Transaction` remains the tool for a decision that spans records.
+
+* **Breaking change: by default, a save now writes only what changed.** Every `Record` tracks its changes granularly. A save writes precisely the values the instance added, changed, or removed since it last loaded or saved. Previously, a save wrote the record's entire state, so a save from an instance with a stale view erased changes that other writers committed after the instance loaded. Now those changes survive. Declare the new `@MergeStrategy(OVERWRITE)` annotation on a field to opt that field into the legacy behavior: whenever the record saves, the field writes its full current state and overwrites concurrent changes. ([GH-163](https://github.com/cinchapi/runway/issues/163))
+    * This primarily changes the semantics of collections. A save merges the instance's added and removed elements into the stored collection instead of replacing it. When other writers change the stored collection concurrently, storage is not guaranteed to exactly match the in-memory collection after a save. A mutation with no serialized effect, such as reordering a `List` (the database stores an unordered set of values), is no longer an unsaved change: a save of it writes nothing and fires no save notification.
+* **Breaking change: `preventStaleWrites` now checks only the data a save could
+  overwrite.** Changes to records or values that the save does not touch no
+  longer cause a conflict. Previously, any change in the saved object graph
+  caused a conflict. This prevented two callers from using the flag while
+  updating different fields on the same record.
+  ([GH-179](https://github.com/cinchapi/runway/issues/179))
+    * A collection is checked element by element. A concurrent change to an
+      element that the save neither adds nor removes does not cause a
+      conflict, so two callers can add different elements to one collection.
+    * Deletion remains stricter. Deleting a record removes all of its data, so
+      any concurrent change to that record causes a conflict.
+    * Changing a value and then restoring its loaded value does not cause a
+      conflict because the save would not overwrite anything.
+    * The flag checks writes, not reads. If a write depends on a value read
+      earlier, declare that value with `verifyOnSave`, or use a `Transaction`
+      when the value belongs to another record.
+* **A `Record` can declare the values a save must verify.** Call `verifyOnSave` with the names of the fields a decision rests on. The next save of that `Record` then fails with a `StaleDataException` when the database no longer holds what the `Record` last saw for one of them. A decision that rests on another `Record` still calls for a `Transaction`, whose reads join its conflict footprint.
+    * A value stored alongside the ones the `Record` saw is a difference, so an element another writer added to a declared collection fails the save.
+    * The verification applies whether or not the save prevents stale writes.
+    * The declaration lasts until a save commits, so each decision declares its own. A save that does not commit leaves the declaration in place.
+    * A name that does not identify a stored field of the `Record` is refused.
+    * Within a `Transaction`, a `Record` that the `Transaction` loaded needs no declaration, because the `Transaction` fails its own commit when a writer changes anything it read. Any other `Record` carries its declaration into the save, and a writer that moves a declared value fails that save or the commit. A save is refused when it carries a declaration on a `Record` that was last loaded or saved outside the `Transaction` after it began; load that `Record` through the `Transaction` instead.
+
+##### Atomic Operations
+A record's identity is its data under its `@Unique` constraints. This release lets a constraint scope that identity across the class hierarchy, and it adds `intern`, which resolves a record by its identity, atomically.
+
+* **A `@Unique` constraint can scope its identity across the class hierarchy.** Declare `@Unique(any = true)`, and the declaring class and every descendant share one identity space, in the same sense that `findAnyUnique` matches across them. A save that duplicates the identity anywhere in that subtree fails enforcement. The scope lives on the declaration, so no caller passes a class that can drift. The default is unchanged: a constraint without `any = true` applies among records of the same concrete class. ([GH-171](https://github.com/cinchapi/runway/issues/171))
+    * A named compound constraint declares one `any` for all of its members. A hierarchy-scoped group also declares all of its members in one class. A group that violates either rule is rejected as a misdeclaration.
+* **`intern` atomically returns the one record that shares a record's unique identity, or saves the given record when none exists.** A caller can construct a record and canonicalize it in one call, with no hand-built criteria that can drift from the constraints. A separate find-then-create sequence can lose a race with a concurrent caller; the single call cannot.
+    * On `Runway`, the lookup and the save commit as one transaction, independent of any transaction the caller holds open. Concurrent callers for the same identity converge on a single record, and conflicts retry within the bounds of the governing `AtomicRetryPolicy`. On a `TransactionInterface`, the lookup and the save stage within that transaction.
+    * `Record#intern()` interns the record in its own transactional scope: if the record is bound to an open transaction, then the lookup and the save stage within it; otherwise, they commit as one transaction against the record's `Runway`.
+    * `Record#intern()` is an identity operation, not an audience-mediated action. It canonicalizes the record itself, so no access checks apply, even when the record is an `Audience`. `Audience#intern` is the audience-mediated form. It enforces the audience's permissions and visibility on whatever record it interns, including the audience itself.
+    * A record shares the identity only if it agrees with every `@Unique` constraint; a `null` value does not participate. An existing record that shares some but not all of the identity is not a match. The save then fails `@Unique` enforcement rather than adopt that record silently. Within a caller-owned transaction, that failed save poisons the transaction, so the staged writes can never commit.
+    * Each `@Unique` constraint is matched within its declared scope, so a constraint with `any = true` looks across the declaring class's hierarchy. `intern` adopts only a record that shares the given record's concrete class. An identity that a record of another class claims is never adopted; the save fails `@Unique` enforcement, which surfaces the conflict.
+    * A record with no non-null value under any `@Unique` constraint is rejected with `IllegalArgumentException`.
+    * `DuplicateEntryException` propagates when more than one record matches a single constraint within its scope, consistent with `findUnique`.
+* **An `Audience` performs `intern` and the atomic `find*AndUpdate` methods under its access rules.**
+    * `intern` requires permission to create the record, even when an existing record already claims the identity. It refuses an existing match that is not visible to the `Audience`. The refusal of a hidden match still confirms that a record with the identity exists.
+    * The rules apply to whatever record the `Audience` interns, including itself; `Record#intern()` remains the unmediated identity operation.
+    * The `Audience` is recorded as the author of a record that `intern` saves.
+    * A `find*AndUpdate` call matches among the records that are visible to the `Audience`, so "first" and "unique" are evaluated over the visible matches.
+    * The call updates the match only if the key is writable by the `Audience`; otherwise, it returns `null` and changes nothing.
+    * The field eligibility and replacement rules are the same as on `Runway`.
+    * The lookup, the access checks and the update run in the `Audience`'s transactional scope. Within an open transaction, they stage and commit with it. Otherwise, they commit together in their own transaction, and conflicts retry within the bounds of the governing `AtomicRetryPolicy`.
+
+##### Stale Reference Handling
+In cases where Runway encountered a stale reference (e.g., a record with no stored data because it was previously deleted or because there were destructive modifications outside of Runway), it previously behaved inconsistently. For example, a stale reference in a collection was dropped and quietly deleted from the database, while a scalar field with a stale reference either did the same thing or caused an entire load operation to fail, depending on the server.
+
+This release makes stale reference handling consistent and lets users configure the desired behavior globally or per field.
+
+* **By default, a stale reference is skipped** (`ReferenceNotFoundPolicy.SKIP`) so that a housing scalar field receives a `null` value and a housing collection does not consider the reference at all. The stale reference still exists in the database, but Runway will not encounter load errors because of it. The consequences of this default are that users must account for `NullPointerException`s in cases where a `null` value is hydrated unexpectedly, and that a load no longer cleans up stale references on its own.
+* **Declare `@ReferenceNotFound` on a field to choose a different policy.** `ReferenceNotFoundPolicy.REPAIR` skips the stale reference and also deletes it from the database, so the housing record stops carrying it. `ReferenceNotFoundPolicy.ERROR` fails the load of the housing record and throws a `ReferenceNotFoundException` naming that record, the field, and the stale reference. Use `ERROR` for a reference the record cannot be correct without.
+* **A policy applies when a reference loads.** For a `DeferredReference` that is `get()` rather than the load of the record that holds it, so `get()` returns `null` under `SKIP`, deletes the stale reference and returns `null` under `REPAIR`, and throws `ReferenceNotFoundException` under `ERROR`. Previously, `get()` on a stale reference threw a `NullPointerException` from inside Runway.
+* **`Runway.builder().referenceNotFoundPolicy` sets the policy for every field that declares none.** Set it to `REPAIR` to keep the cleanup that a load previously performed on its own.
+
+##### Audiences
+* **Every `Audience` performs database operations.** Previously, only an `Audience` that is a `Record` could; every database operation on the anonymous `Audience` failed. Now an anonymous audience holds the database it operates against and mediates the same operations, with the same visibility and permission rules as a `Record`-based audience, including the transactional operations.
+    * `Audience.anonymous()` resolves against the single open `Runway`, and is also available as `Runway#anonymous()`. The new `Audience.anonymous(DatabaseInterface)` names the database explicitly, including a `Transaction`.
+    * An anonymous `Audience` that resolves against zero or multiple open `Runway` instances names no database. It still answers access policy questions, such as `$checkIfVisible`, but refuses every database operation with an `IllegalStateException`.
+    * Anonymous audiences are equal to one another regardless of the database each holds. Compare with `equals` or the new `Audience#isAnonymous()` instead of identity.
+* **`Audience#create` binds the created `Record` to the audience's database context.** The `Record`, and every `Record` reachable from its constructor arguments, saves within that context. Previously, `Audience#create` checked permission and attributed authorship, but bound the record to nothing.
+    * A mediated `create` or `intern` leaves the caller's records bound as they were unless it saves the record. A `create` that throws restores the binding of every record reachable from the constructor arguments. An `intern` that does not save the record restores the record and every record reachable from it. If a save failure poisons a `Transaction` that stays open, then the transaction's failed-save contract governs instead.
+
+##### API Breaks and Deprecations
+* **Breaking change: a delete listener receives a deleted record's identity
+  and stored state instead of a `Record`.** `Runway.Builder#onDelete` and
+  `Runway.Properties#onDelete` now take a
+  `TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>>`,
+  which receives the deleted record's id, its type, and the values it held
+  when the save deleted it. A deleted record no longer exists, so a live
+  object invited callers to act on something that could not be read, saved
+  or linked.
+    * Replace a listener that reads fields off the record with one that reads
+      them out of the data map, keyed by field name.
+      ```java
+      runway = Runway.builder()
+              .onDelete(Order.class, (id, clazz, data) -> {
+                  Set<Object> status = data.get("status");
+                  audit.record(id, status);
+              })
+              .build();
+      ```
+    * The data is the state the database stored, so a record that the save
+      itself changed reports its stored values, not the unsaved edits the
+      caller's instance held.
+    * A save reads a deleted record's stored state only when a delete
+      listener is registered for the record's class or a superclass, so a
+      deletion that no listener receives pays nothing for the data a
+      notification would carry.
+    * When the read happens, it shares a server round trip that the save
+      already makes, so it never adds one of its own.
+    * A listener registered after a save already staged its deletions
+      receives an empty data map for that save's deletions, never `null`.
+    * A listener registered for a type still receives only records of that
+      type or a subclass, and a listener that throws still does not block the
+      remaining listeners.
+* **Removed unused members from the `com.cinchapi.runway.db` interfaces.**
+  `Saver#find(Criteria, Consumer)`,
+  `Saver#reconcile(String, long, Collection)`, `Reader#select(String, long)`,
+  `Reader#get(String, long)` and `Reader#concourse()` are removed, along with
+  their implementations. No Runway operation called them.
+    * `AbstractReader#concourse()` remains for subclasses, but it is no longer
+      public.
+    * The varargs `Saver#reconcile(String, long, Object...)` and the
+      criteria-based reads are unchanged.
+
+##### Bug Fixes
+* Fixed a bug where a unique query through an `Audience` whose visibility `Scope` denies all access failed with a `ClassCastException` instead of returning `null`. `findUnique` and `findAnyUnique` now return `null` under such a `Scope`, consistent with their contract when no record matches.
+* Fixed a bug where a save of a record that another writer deleted restored that record instead of failing. The record reappeared in queries over its class, and a later load of it could fail because the values it requires were gone. A save that would write anything into a record that holds no data now throws the new `DeletedRecordException`, which names the record, and writes nothing.
+    * The refusal reaches the caller ahead of a stale-write failure when both apply to the same record.
+    * A realm change and a stored author attribution are writes, so a save whose only change is realm membership, or attribution through an `Audience` that a save stores, is refused the same way.
+    * A record that has never been saved is unaffected. A save with nothing to write still succeeds. Deleting a record that another writer already deleted still succeeds.
+    * Inside a transaction, the refusal poisons the transaction, so none of its staged writes can commit.
+    * Against a server that supports bulk commands, the existence check adds one server round trip per save operation, and none when the save has nothing to write or already performs a uniqueness or stale-data read.
+* Fixed a bug where a `write` performed through an `Audience` could modify a record that a visibility `Scope` hid from that `Audience`. The write succeeded when the caller held the record and its field rules permitted the keys. A write through an `Audience` now also requires the record to be visible.
+* Fixed a bug where a save that processed multiple in-memory copies of the same record could deliver the save notification to a copy that changed nothing and treat that copy as current. The combined saves of one transaction could do the same. A later `preventStaleWrites` save of the stale copy then silently overwrote the changes that actually persisted. Now the notification goes to the copy whose changes persisted, and the stale copy fails the stale-write check.
+* Fixed a bug where a save of a record with no unsaved changes traversed its transient fields and saved modified records that were referenced only through them. A transient field is outside a record's persistent data, so a record referenced only through one no longer saves with its holder.
+* Fixed a bug where an exception thrown by an `overrideSave` accessor, or a `null` record argument, was recorded as an ordinary save failure and returned `false`. That disguised a programming error as a data rejection. Now both propagate from the save as exceptions.
+* Fixed a bug where `AccessControl#authorize` refused an anonymous `Audience` that was permitted to create the record, so `authorize` could disagree with creation through an `Audience`. `authorize` now applies the same creation rules that govern creation through an `Audience`.
+* Fixed a bug where a save that enforced a `@Unique` constraint conflicted with concurrent writes to unrelated records of the same class, including the creation of a record that holds none of the constrained values. The conflict failed the commit of a `Transaction` that performed the save, and it made a managed save retry. Such a save now conflicts only with a writer of the constrained values. ([GH-176](https://github.com/cinchapi/runway/issues/176))
+* Fixed a bug where a save attributed a revision to an `AdHocRecord`. An `AdHocRecord` is never stored, so the attribution named a record that does not exist and no reader could resolve it. Such a save now records no author.
+* Fixed a bug where an `Audience#frame` that filtered any data caused a later, fully permitted `read` on the same thread to fail with a `RestrictedAccessException`. A `frame` now has no effect on later calls, as its contract promises. In a server that pools threads, the stale failure could cross requests.
+* Fixed a bug where the single-key `Audience#read` (and `readAs`) returned `null` for a key the `Audience` may not read, instead of the `RestrictedAccessException` that its contract documents. The single-key form now behaves the same as the collection-based `read`. A `read` of a record that the `Audience` cannot discover at all is now also refused with a `RestrictedAccessException`; previously the outcome depended on the earlier calls on the thread.
+* Fixed a bug where an `Audience#frame` that threw partway through its walk poisoned every later `frame` on the same thread. The records in flight at the failure rendered as `(recursive link)` placeholders instead of nested data, and the result still looked successful. In a server that pools threads, one failure degraded every later response the thread rendered. A `frame` that throws now leaves no residue, and the placeholder appears only for a genuine cycle within a single `frame`. ([GH-206](https://github.com/cinchapi/runway/issues/206))
+* Fixed a bug where a save that already committed reported failure. The save returned `false`, and every record it processed reverted to its pre-save state in memory, so the caller could not learn that the database held the changes. The bug occurred when a save deleted a record that another record in the same save referenced through a `@CaptureDelete` collection field whose declared type cannot be created without constructor arguments.
+    * Within a `Transaction`, the failure still reaches the caller from `commit()`, and `committed()` reports `true`.
+    * A failure in one record's dispatch does not block the notifications and checkpoints of the records that follow it.
+
 #### Version 2.2.0 (August 4, 2026)
 * **Added `DynamicWritePolicy` to govern which fields `Record#set` can write.** By default, a dynamic write can reach any field, including final, private, package-private and protected ones, which preserves the historical behavior. Configure a policy per `Runway` instance with `Runway.builder().dynamicWritePolicy(...)`. ([GH-147](https://github.com/cinchapi/runway/issues/147))
     * `DynamicWritePolicy.javaDefaults()` returns a policy that respects Java modifiers, so only public non-final fields accept dynamic writes. `DynamicWritePolicy.builder()` composes a policy that selectively allows final, private, package-private or protected fields.

@@ -16,6 +16,7 @@
 package com.cinchapi.runway;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -46,23 +47,23 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Register a delete listener via
-     * {@link Runway.Builder#onDelete(java.util.function.Consumer)}.</li>
+     * {@link Runway.Builder#onDelete(com.cinchapi.common.function.TriConsumer)}.</li>
      * <li>Save a {@link TrackedRecord}.</li>
      * <li>Call {@link Record#deleteOnSave()} and save the record again.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The delete listener fires with the deleted
-     * {@link Record} and the record no longer loads from the database.
+     * <strong>Expected:</strong> The delete listener fires with the id of the
+     * deleted {@link Record}, and the record no longer loads from the database.
      */
     @Test
     public void testDeleteListenerCalledWhenSaveDeletesRecord()
             throws Exception {
         CountDownLatch latch = new CountDownLatch(1);
-        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
 
         runway.close();
-        runway = runwayBuilder().onDelete(record -> {
-            deletedRecords.add(record);
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
             latch.countDown();
         }).build();
 
@@ -76,9 +77,129 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         Assert.assertTrue("Delete listener was not called within timeout",
                 latch.await(5, TimeUnit.SECONDS));
         Assert.assertEquals(1, deletedRecords.size());
-        Assert.assertTrue(deletedRecords.contains(record));
+        Assert.assertTrue(deletedRecords.contains(record.id()));
         Assert.assertNull("Record should have been deleted",
                 runway.load(TrackedRecord.class, record.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a failure while a committed save
+     * dispatches its outcomes does not report the save as failed and does not
+     * block the lifecycle of the records that follow the failing one.
+     * <p>
+     * <strong>Start state:</strong> Five saved {@link HostileCleanupRecord
+     * HostileCleanupRecords}, whose post-commit cleanup always throws, and five
+     * saved {@link TrackedRecord TrackedRecords}. Several records of each kind
+     * participate because the dispatch order across records is unspecified;
+     * with five of each, at least one deletion dispatches after a failure in
+     * every practical order.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener that records the deleted ids.</li>
+     * <li>Save the {@link HostileCleanupRecord HostileCleanupRecords} and the
+     * {@link TrackedRecord TrackedRecords}.</li>
+     * <li>Modify every {@link HostileCleanupRecord} and mark every
+     * {@link TrackedRecord} with {@link Record#deleteOnSave()}, so the save
+     * both deletes records and changes records.</li>
+     * <li>Save all of the records in one call.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true}, the deleted
+     * records no longer load, the modified records' changes persist, and the
+     * delete listener receives every deletion even though the modified records'
+     * dispatches threw.
+     */
+    @Test
+    public void testSaveSucceedsWhenOutcomeDispatchThrows() throws Exception {
+        int count = 5;
+        CountDownLatch latch = new CountDownLatch(count);
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
+            latch.countDown();
+        }).build();
+
+        Record[] records = new Record[2 * count];
+        for (int i = 0; i < count; ++i) {
+            HostileCleanupRecord changed = new HostileCleanupRecord();
+            changed.name = "Changed " + i;
+            records[i] = changed;
+            TrackedRecord removed = new TrackedRecord();
+            removed.name = "Removed " + i;
+            records[count + i] = removed;
+        }
+        Assert.assertTrue(runway.save(records));
+
+        for (int i = 0; i < count; ++i) {
+            ((HostileCleanupRecord) records[i]).name = "Changed " + i
+                    + " (Updated)";
+            records[count + i].deleteOnSave();
+        }
+        Assert.assertTrue(
+                "A committed save must not be reported as failed because its"
+                        + " outcome dispatch threw",
+                runway.save(records));
+
+        for (int i = 0; i < count; ++i) {
+            Assert.assertNull(
+                    runway.load(TrackedRecord.class, records[count + i].id()));
+            HostileCleanupRecord loaded = runway
+                    .load(HostileCleanupRecord.class, records[i].id());
+            Assert.assertEquals("Changed " + i + " (Updated)", loaded.name);
+        }
+        Assert.assertTrue(
+                "Delete listeners were not called even though the save"
+                        + " committed the deletions",
+                latch.await(5, TimeUnit.SECONDS));
+        for (int i = 0; i < count; ++i) {
+            Assert.assertTrue(deletedRecords.contains(records[count + i].id()));
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the delete notification reports the
+     * state the record stored when the deleting save also audits stale writes,
+     * so the deletion-state read coexists with a read that can reject the save.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TrackedRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener that records the reported state.</li>
+     * <li>Save a {@link TrackedRecord}.</li>
+     * <li>Call {@link Record#deleteOnSave()} and save the record again with
+     * {@code preventStaleWrites} enabled.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The delete listener fires and its data reports
+     * the name the record stored.
+     */
+    @Test
+    public void testDeleteListenerReportsStoredStateWhenSaveAuditsStaleWrites()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        Map<Long, Map<String, Set<Object>>> reported = new ConcurrentHashMap<>();
+
+        runway.close();
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {
+            reported.put(id, data);
+            latch.countDown();
+        }).build();
+
+        TrackedRecord record = new TrackedRecord();
+        record.name = "Audited Delete";
+        Assert.assertTrue(record.save());
+
+        record.deleteOnSave();
+        Assert.assertTrue(runway.save(true, record));
+
+        Assert.assertTrue("Delete listener was not called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertTrue(reported.get(record.id()).get("name")
+                .contains("Audited Delete"));
     }
 
     /**
@@ -149,13 +270,14 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     public void testTypedDeleteListenerOnlyFiresForMatchingType()
             throws Exception {
         CountDownLatch latch = new CountDownLatch(1);
-        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
 
         runway.close();
-        runway = runwayBuilder().onDelete(TrackedRecord.class, record -> {
-            deletedRecords.add(record);
-            latch.countDown();
-        }).build();
+        runway = runwayBuilder()
+                .onDelete(TrackedRecord.class, (id, clazz, data) -> {
+                    deletedRecords.add(id);
+                    latch.countDown();
+                }).build();
 
         OtherRecord other = new OtherRecord();
         other.label = "Other";
@@ -174,7 +296,49 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         Assert.assertTrue("Typed delete listener was not called within timeout",
                 latch.await(5, TimeUnit.SECONDS));
         Assert.assertEquals(1, deletedRecords.size());
-        Assert.assertTrue(deletedRecords.contains(tracked));
+        Assert.assertTrue(deletedRecords.contains(tracked.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a typed delete listener fires for a
+     * {@link Record} whose class is a subclass of the registered type.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link SpecialTrackedRecord}, a
+     * subclass of {@link TrackedRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener for {@link TrackedRecord}.</li>
+     * <li>Delete the {@link SpecialTrackedRecord} via a save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The listener fires with the id of the deleted
+     * subclass record.
+     */
+    @Test
+    public void testTypedDeleteListenerFiresForSubclassOfRegisteredType()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder()
+                .onDelete(TrackedRecord.class, (id, clazz, data) -> {
+                    deletedRecords.add(id);
+                    latch.countDown();
+                }).build();
+
+        SpecialTrackedRecord record = new SpecialTrackedRecord();
+        record.name = "Subclass";
+        Assert.assertTrue(record.save());
+
+        record.deleteOnSave();
+        Assert.assertTrue(record.save());
+
+        Assert.assertTrue(
+                "Listener must fire for a subclass of the registered type",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertTrue(deletedRecords.contains(record.id()));
     }
 
     /**
@@ -197,7 +361,7 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         AtomicInteger deleteCount = new AtomicInteger(0);
 
         runway.close();
-        runway = runwayBuilder().onDelete(record -> {
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {
             deleteCount.incrementAndGet();
         }).build();
 
@@ -215,7 +379,8 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that a delete listener registered after
-     * build via {@link Runway.Properties#onDelete(java.util.function.Consumer)}
+     * build via
+     * {@link Runway.Properties#onDelete(com.cinchapi.common.function.TriConsumer)}
      * fires when a save deletes a {@link Record}.
      * <p>
      * <strong>Start state:</strong> A {@link Runway} built with no listeners.
@@ -228,18 +393,18 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The post-build delete listener fires with the
-     * deleted {@link Record}.
+     * id of the deleted {@link Record}.
      */
     @Test
     public void testOnDeleteAfterBuild() throws Exception {
         CountDownLatch latch = new CountDownLatch(1);
-        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
 
         runway.close();
         runway = runwayBuilder().build();
 
-        runway.properties().onDelete(record -> {
-            deletedRecords.add(record);
+        runway.properties().onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
             latch.countDown();
         });
 
@@ -254,7 +419,7 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
                 "Post-build delete listener was not called within timeout",
                 latch.await(5, TimeUnit.SECONDS));
         Assert.assertEquals(1, deletedRecords.size());
-        Assert.assertTrue(deletedRecords.contains(record));
+        Assert.assertTrue(deletedRecords.contains(record.id()));
     }
 
     /**
@@ -283,14 +448,14 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         CountDownLatch saveLatch = new CountDownLatch(3);
         CountDownLatch deleteLatch = new CountDownLatch(1);
         AtomicInteger saveCount = new AtomicInteger(0);
-        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
 
         runway.close();
         runway = runwayBuilder().onSave(record -> {
             saveCount.incrementAndGet();
             saveLatch.countDown();
-        }).onDelete(record -> {
-            deletedRecords.add(record);
+        }).onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
             deleteLatch.countDown();
         }).build();
 
@@ -314,37 +479,41 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
 
         Assert.assertEquals(3, saveCount.get());
         Assert.assertEquals(1, deletedRecords.size());
-        Assert.assertTrue(deletedRecords.contains(removed));
+        Assert.assertTrue(deletedRecords.contains(removed.id()));
         Assert.assertNull(runway.load(TrackedRecord.class, removed.id()));
         Assert.assertNotNull(runway.load(TrackedRecord.class, kept.id()));
     }
 
     /**
-     * <strong>Goal:</strong> Verify that delete listeners compose and that an
-     * exception in one listener does not prevent the next from firing.
+     * <strong>Goal:</strong> Verify that delete listeners fire in registration
+     * order and that an exception in one listener does not prevent the next
+     * from firing.
      * <p>
      * <strong>Start state:</strong> A saved {@link TrackedRecord}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Register two delete listeners; the first always throws.</li>
+     * <li>Register two delete listeners that record their firing order; the
+     * first always throws.</li>
      * <li>Delete the {@link TrackedRecord} via a save.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The second listener still fires.
+     * <strong>Expected:</strong> Both listeners fire, exactly once each, in
+     * registration order.
      */
     @Test
     public void testDeleteListenerCompositionAndErrorIsolation()
             throws Exception {
         CountDownLatch latch = new CountDownLatch(1);
-        AtomicInteger secondCount = new AtomicInteger(0);
+        List<String> order = new CopyOnWriteArrayList<>();
 
         runway.close();
-        runway = runwayBuilder().onDelete(record -> {
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {
+            order.add("first");
             throw new RuntimeException(
                     "Intentional exception from first listener");
-        }).onDelete(record -> {
-            secondCount.incrementAndGet();
+        }).onDelete((id, clazz, data) -> {
+            order.add("second");
             latch.countDown();
         }).build();
 
@@ -358,7 +527,7 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(
                 "Second delete listener was not called despite first throwing",
                 latch.await(5, TimeUnit.SECONDS));
-        Assert.assertEquals(1, secondCount.get());
+        Assert.assertEquals(ImmutableList.of("first", "second"), order);
     }
 
     /**
@@ -384,11 +553,11 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     public void testDeleteListenerFiredForCascadeDeletedCompanion()
             throws Exception {
         CountDownLatch latch = new CountDownLatch(2);
-        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
 
         runway.close();
-        runway = runwayBuilder().onDelete(record -> {
-            deletedRecords.add(record);
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
             latch.countDown();
         }).build();
 
@@ -406,8 +575,8 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
                 "Delete listener did not fire for both records within timeout",
                 latch.await(5, TimeUnit.SECONDS));
         Assert.assertEquals(2, deletedRecords.size());
-        Assert.assertTrue(deletedRecords.contains(parent));
-        Assert.assertTrue(deletedRecords.contains(child));
+        Assert.assertTrue(deletedRecords.contains(parent.id()));
+        Assert.assertTrue(deletedRecords.contains(child.id()));
         Assert.assertNull(runway.load(CascadeParent.class, parent.id()));
         Assert.assertNull(runway.load(CascadeChild.class, child.id()));
     }
@@ -428,16 +597,19 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The delete listener fires for both the target
-     * and the joined parent, and neither record loads afterwards.
+     * and the joined parent, each notification reports the state the record
+     * stored, and neither record loads afterwards.
      */
     @Test
     public void testDeleteListenerFiredForJoinDeletedRecord() throws Exception {
         CountDownLatch latch = new CountDownLatch(2);
-        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
+        Map<Long, Map<String, Set<Object>>> reported = new ConcurrentHashMap<>();
 
         runway.close();
-        runway = runwayBuilder().onDelete(record -> {
-            deletedRecords.add(record);
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
+            reported.put(id, data);
             latch.countDown();
         }).build();
 
@@ -455,8 +627,12 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
                 "Delete listener did not fire for both records within timeout",
                 latch.await(5, TimeUnit.SECONDS));
         Assert.assertEquals(2, deletedRecords.size());
-        Assert.assertTrue(deletedRecords.contains(target));
-        Assert.assertTrue(deletedRecords.contains(parent));
+        Assert.assertTrue(deletedRecords.contains(target.id()));
+        Assert.assertTrue(deletedRecords.contains(parent.id()));
+        Assert.assertTrue(
+                reported.get(target.id()).get("name").contains("Join Target"));
+        Assert.assertTrue(
+                reported.get(parent.id()).get("name").contains("Join Parent"));
         Assert.assertNull(runway.load(JoinTarget.class, target.id()));
         Assert.assertNull(runway.load(JoinParent.class, parent.id()));
     }
@@ -487,14 +663,14 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         CountDownLatch saveLatch = new CountDownLatch(3);
         CountDownLatch deleteLatch = new CountDownLatch(1);
         Set<Record> savedRecords = ConcurrentHashMap.newKeySet();
-        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
 
         runway.close();
         runway = runwayBuilder().onSave(record -> {
             savedRecords.add(record);
             saveLatch.countDown();
-        }).onDelete(record -> {
-            deletedRecords.add(record);
+        }).onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
             deleteLatch.countDown();
         }).build();
 
@@ -516,7 +692,7 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
 
         Assert.assertTrue(savedRecords.contains(parent));
         Assert.assertEquals(1, deletedRecords.size());
-        Assert.assertTrue(deletedRecords.contains(target));
+        Assert.assertTrue(deletedRecords.contains(target.id()));
 
         // Assert against the raw stored data (before any load can perform
         // ad-hoc dangling link cleanup) to prove the capture cleanup was
@@ -561,14 +737,14 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         CountDownLatch saveLatch = new CountDownLatch(2);
         CountDownLatch deleteLatch = new CountDownLatch(2);
         AtomicInteger saveCount = new AtomicInteger(0);
-        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
 
         runway.close();
         runway = runwayBuilder().onSave(record -> {
             saveCount.incrementAndGet();
             saveLatch.countDown();
-        }).onDelete(record -> {
-            deletedRecords.add(record);
+        }).onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
             deleteLatch.countDown();
         }).build();
 
@@ -594,8 +770,8 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         Thread.sleep(1000);
 
         Assert.assertEquals(2, deletedRecords.size());
-        Assert.assertTrue(deletedRecords.contains(parent));
-        Assert.assertTrue(deletedRecords.contains(target));
+        Assert.assertTrue(deletedRecords.contains(parent.id()));
+        Assert.assertTrue(deletedRecords.contains(target.id()));
         Assert.assertEquals(
                 "Save listener should not fire for records that the save deleted",
                 2, saveCount.get());
@@ -630,14 +806,14 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         CountDownLatch saveLatch = new CountDownLatch(2);
         CountDownLatch deleteLatch = new CountDownLatch(2);
         AtomicInteger saveCount = new AtomicInteger(0);
-        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
 
         runway.close();
         runway = runwayBuilder().onSave(record -> {
             saveCount.incrementAndGet();
             saveLatch.countDown();
-        }).onDelete(record -> {
-            deletedRecords.add(record);
+        }).onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
             deleteLatch.countDown();
         }).build();
 
@@ -663,8 +839,8 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         Thread.sleep(1000);
 
         Assert.assertEquals(2, deletedRecords.size());
-        Assert.assertTrue(deletedRecords.contains(parent));
-        Assert.assertTrue(deletedRecords.contains(target));
+        Assert.assertTrue(deletedRecords.contains(parent.id()));
+        Assert.assertTrue(deletedRecords.contains(target.id()));
         Assert.assertEquals(
                 "Save listener should not fire for records that the save deleted",
                 2, saveCount.get());
@@ -704,14 +880,14 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         CountDownLatch saveLatch = new CountDownLatch(3);
         CountDownLatch deleteLatch = new CountDownLatch(1);
         List<Record> savedRecords = new CopyOnWriteArrayList<>();
-        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
 
         runway.close();
         runway = runwayBuilder().onSave(record -> {
             savedRecords.add(record);
             saveLatch.countDown();
-        }).onDelete(record -> {
-            deletedRecords.add(record);
+        }).onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
             deleteLatch.countDown();
         }).build();
 
@@ -731,7 +907,7 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         Assert.assertTrue("Delete listener was not called within timeout",
                 deleteLatch.await(5, TimeUnit.SECONDS));
         Assert.assertEquals(1, deletedRecords.size());
-        Assert.assertTrue(deletedRecords.contains(target));
+        Assert.assertTrue(deletedRecords.contains(target.id()));
 
         // Assert against the raw stored data (before any load can perform
         // ad-hoc dangling link cleanup) to prove the capture cleanup was
@@ -779,11 +955,11 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     public void testCaptureCleanupDoesNotRevertChangesOfRecordInSameSave()
             throws Exception {
         CountDownLatch deleteLatch = new CountDownLatch(1);
-        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
 
         runway.close();
-        runway = runwayBuilder().onDelete(record -> {
-            deletedRecords.add(record);
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
             deleteLatch.countDown();
         }).build();
 
@@ -800,7 +976,7 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
 
         Assert.assertTrue("Delete listener was not called within timeout",
                 deleteLatch.await(5, TimeUnit.SECONDS));
-        Assert.assertTrue(deletedRecords.contains(target));
+        Assert.assertTrue(deletedRecords.contains(target.id()));
 
         // Assert against the raw stored data (before any load can perform
         // ad-hoc dangling link cleanup) to prove the capture cleanup was
@@ -846,14 +1022,14 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         CountDownLatch saveLatch = new CountDownLatch(2);
         CountDownLatch deleteLatch = new CountDownLatch(2);
         AtomicInteger saveCount = new AtomicInteger(0);
-        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
 
         runway.close();
         runway = runwayBuilder().onSave(record -> {
             saveCount.incrementAndGet();
             saveLatch.countDown();
-        }).onDelete(record -> {
-            deletedRecords.add(record);
+        }).onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
             deleteLatch.countDown();
         }).build();
 
@@ -878,8 +1054,8 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         Thread.sleep(1000);
 
         Assert.assertEquals(2, deletedRecords.size());
-        Assert.assertTrue(deletedRecords.contains(target));
-        Assert.assertTrue(deletedRecords.contains(parent));
+        Assert.assertTrue(deletedRecords.contains(target.id()));
+        Assert.assertTrue(deletedRecords.contains(parent.id()));
         Assert.assertEquals(
                 "Save listener should not fire for records that the save deleted",
                 2, saveCount.get());
@@ -911,11 +1087,11 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     public void testCallerInstanceNotifiedWhenJoinParentOrderedFirstInSameSave()
             throws Exception {
         CountDownLatch deleteLatch = new CountDownLatch(2);
-        List<Record> deletedRecords = new CopyOnWriteArrayList<>();
+        List<Long> deletedRecords = new CopyOnWriteArrayList<>();
 
         runway.close();
-        runway = runwayBuilder().onDelete(record -> {
-            deletedRecords.add(record);
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
             deleteLatch.countDown();
         }).build();
 
@@ -933,15 +1109,9 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
                 "Delete listener did not fire for both records within timeout",
                 deleteLatch.await(5, TimeUnit.SECONDS));
 
-        Record notified = null;
-        for (Record record : deletedRecords) {
-            if(record.id() == parent.id()) {
-                notified = record;
-            }
-        }
-        Assert.assertSame(
-                "The delete notification must deliver the caller's instance",
-                parent, notified);
+        Assert.assertTrue(
+                "The delete notification must report the deleted record",
+                deletedRecords.contains(parent.id()));
         Assert.assertTrue("The join deleted record must not survive the save",
                 client.describe(parent.id()).isEmpty());
         Assert.assertNull(runway.load(JoinParent.class, parent.id()));
@@ -974,11 +1144,11 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     public void testJoinDeletedRecordNotRecreatedByLaterSaveOfCallerInstance()
             throws Exception {
         CountDownLatch deleteLatch = new CountDownLatch(2);
-        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
 
         runway.close();
-        runway = runwayBuilder().onDelete(record -> {
-            deletedRecords.add(record);
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
             deleteLatch.countDown();
         }).build();
 
@@ -994,7 +1164,7 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(
                 "Delete listener did not fire for both records within timeout",
                 deleteLatch.await(5, TimeUnit.SECONDS));
-        Assert.assertTrue(deletedRecords.contains(parent));
+        Assert.assertTrue(deletedRecords.contains(parent.id()));
 
         parent.name = "Join Parent (Updated)";
         Assert.assertTrue(parent.save());
@@ -1027,11 +1197,11 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     public void testJoinDeleteAppliesWhenAnnotatedFieldIsArray()
             throws Exception {
         CountDownLatch deleteLatch = new CountDownLatch(2);
-        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
 
         runway.close();
-        runway = runwayBuilder().onDelete(record -> {
-            deletedRecords.add(record);
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
             deleteLatch.countDown();
         }).build();
 
@@ -1048,8 +1218,8 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(
                 "Delete listener did not fire for both records within timeout",
                 deleteLatch.await(5, TimeUnit.SECONDS));
-        Assert.assertTrue(deletedRecords.contains(target));
-        Assert.assertTrue(deletedRecords.contains(parent));
+        Assert.assertTrue(deletedRecords.contains(target.id()));
+        Assert.assertTrue(deletedRecords.contains(parent.id()));
         Assert.assertNull(runway.load(JoinTarget.class, target.id()));
         Assert.assertNull(runway.load(ArrayJoinParent.class, parent.id()));
     }
@@ -1079,11 +1249,11 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     public void testJoinDeletedRecordNotResurrectedByModifiedInstanceInSameSave()
             throws Exception {
         CountDownLatch deleteLatch = new CountDownLatch(2);
-        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
 
         runway.close();
-        runway = runwayBuilder().onDelete(record -> {
-            deletedRecords.add(record);
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
             deleteLatch.countDown();
         }).build();
 
@@ -1102,8 +1272,8 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
                 "Delete listener did not fire for both records within timeout",
                 deleteLatch.await(5, TimeUnit.SECONDS));
         Assert.assertEquals(2, deletedRecords.size());
-        Assert.assertTrue(deletedRecords.contains(target));
-        Assert.assertTrue(deletedRecords.contains(parent));
+        Assert.assertTrue(deletedRecords.contains(target.id()));
+        Assert.assertTrue(deletedRecords.contains(parent.id()));
         Assert.assertTrue("The join deleted record must not survive the save",
                 client.describe(parent.id()).isEmpty());
         Assert.assertNull(runway.load(JoinParent.class, parent.id()));
@@ -1193,11 +1363,11 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     public void testCaptureCleanupOfImmutableCollectionInSameSave()
             throws Exception {
         CountDownLatch deleteLatch = new CountDownLatch(1);
-        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
 
         runway.close();
-        runway = runwayBuilder().onDelete(record -> {
-            deletedRecords.add(record);
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
             deleteLatch.countDown();
         }).build();
 
@@ -1215,7 +1385,7 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
 
         Assert.assertTrue("Delete listener was not called within timeout",
                 deleteLatch.await(5, TimeUnit.SECONDS));
-        Assert.assertTrue(deletedRecords.contains(removed));
+        Assert.assertTrue(deletedRecords.contains(removed.id()));
 
         Set<Object> stored = client.select("targets", parent.id());
         Assert.assertEquals(1, stored.size());
@@ -1250,11 +1420,11 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     public void testCallerInstanceAuthoritativeWhenCascadeChildAlsoInSameSave()
             throws Exception {
         CountDownLatch deleteLatch = new CountDownLatch(2);
-        List<Record> deletedRecords = new CopyOnWriteArrayList<>();
+        List<Long> deletedRecords = new CopyOnWriteArrayList<>();
 
         runway.close();
-        runway = runwayBuilder().onDelete(record -> {
-            deletedRecords.add(record);
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
             deleteLatch.countDown();
         }).build();
 
@@ -1275,15 +1445,9 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(
                 "Delete listener did not fire for both records within timeout",
                 deleteLatch.await(5, TimeUnit.SECONDS));
-        Record notified = null;
-        for (Record record : deletedRecords) {
-            if(record.id() == c1.id()) {
-                notified = record;
-            }
-        }
-        Assert.assertSame(
-                "The delete notification must deliver the caller's instance",
-                c1, notified);
+        Assert.assertTrue(
+                "The delete notification must report the deleted record",
+                deletedRecords.contains(c1.id()));
 
         c1.name = "Cascade Child (Updated)";
         Assert.assertTrue(c1.save());
@@ -1616,6 +1780,35 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
          */
         public String name;
     }
+
+    /**
+     * A test {@link Record} whose post-commit cleanup always throws, so a test
+     * can verify that a failure while a save dispatches its outcomes does not
+     * change the outcome of the committed save.
+     *
+     * @author Jeff Nelson
+     */
+    public static class HostileCleanupRecord extends Record {
+
+        /**
+         * A name that identifies the record in tests.
+         */
+        public String name;
+
+        @Override
+        void applyCaptureDeleteCleanup(Set<Long> ids) {
+            throw new IllegalStateException(
+                    "Intentional exception from post-commit cleanup");
+        }
+    }
+
+    /**
+     * A test {@link Record} that subclasses {@link TrackedRecord} to verify
+     * that typed listeners match subclasses of the registered type.
+     *
+     * @author Jeff Nelson
+     */
+    public static class SpecialTrackedRecord extends TrackedRecord {}
 
     /**
      * A test {@link Record} of a different type, used to verify typed listener

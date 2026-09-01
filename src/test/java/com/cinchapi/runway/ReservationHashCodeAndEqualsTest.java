@@ -223,6 +223,61 @@ public class ReservationHashCodeAndEqualsTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a counting {@link Reservation} is not
+     * equal to a non-counting {@link Reservation} with the same criteria.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build two {@link Reservation Reservations} with identical criteria,
+     * one with {@code counting(true)} and one without.</li>
+     * <li>Compare them with {@code equals}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The two {@link Reservation Reservations} are
+     * not equal.
+     */
+    @Test
+    public void testNotEqualWhenCountingDiffers() {
+        Reservation a = Reservation
+                .builder(Record.class).criteria(Criteria.where().key("name")
+                        .operator(Operator.EQUALS).value("Alice"))
+                .counting(true).build();
+        Reservation b = Reservation.builder(Record.class).criteria(Criteria
+                .where().key("name").operator(Operator.EQUALS).value("Alice"))
+                .build();
+        Assert.assertNotEquals(a, b);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that two {@link Reservation Reservations}
+     * that differ only in their {@link Criteria} are not equal.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build two {@link Reservation Reservations} that are identical except
+     * for the value their {@link Criteria} matches.</li>
+     * <li>Compare them with {@code equals}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The two {@link Reservation Reservations} are
+     * not equal.
+     */
+    @Test
+    public void testNotEqualWhenCriteriaDiffer() {
+        Reservation a = Reservation.builder(Record.class).criteria(Criteria
+                .where().key("name").operator(Operator.EQUALS).value("Alice"))
+                .build();
+        Reservation b = Reservation.builder(Record.class).criteria(Criteria
+                .where().key("name").operator(Operator.EQUALS).value("Bob"))
+                .build();
+        Assert.assertNotEquals(a, b);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that two unique {@link Reservation
      * Reservations} with identical components are equal.
      * <p>
@@ -250,6 +305,106 @@ public class ReservationHashCodeAndEqualsTest {
                 .unique(true).build();
         Assert.assertEquals(a, b);
         Assert.assertEquals(a.hashCode(), b.hashCode());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that two {@link Reservation Reservations}
+     * that differ only in their {@link Order} are not equal.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build two {@link Reservation Reservations} that are identical except
+     * for the {@link Order} key.</li>
+     * <li>Compare them with {@code equals}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The two {@link Reservation Reservations} are
+     * not equal.
+     */
+    @Test
+    public void testNotEqualWhenOrderDiffers() {
+        Reservation a = Reservation.builder(Record.class)
+                .order(Order.by("name")).build();
+        Reservation b = Reservation.builder(Record.class).order(Order.by("age"))
+                .build();
+        Assert.assertNotEquals(a, b);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that two {@link Reservation Reservations}
+     * that differ only in their {@link Page} are not equal.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build two {@link Reservation Reservations} that are identical except
+     * for the {@link Page}: one on the first page and one on the next
+     * page.</li>
+     * <li>Compare them with {@code equals}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The two {@link Reservation Reservations} are
+     * not equal.
+     */
+    @Test
+    public void testNotEqualWhenPageDiffers() {
+        Reservation a = Reservation.builder(Record.class).page(Page.limit(10))
+                .build();
+        Reservation b = Reservation.builder(Record.class)
+                .page(Page.limit(10).next()).build();
+        Assert.assertNotEquals(a, b);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that two {@link Reservation Reservations}
+     * that differ only in the hierarchy ("any") flag are not equal.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build two {@link Reservation Reservations} that are identical except
+     * that one sets {@code any(true)} and the other sets
+     * {@code any(false)}.</li>
+     * <li>Compare them with {@code equals}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The two {@link Reservation Reservations} are
+     * not equal.
+     */
+    @Test
+    public void testNotEqualWhenAnyDiffers() {
+        Reservation a = Reservation.builder(Record.class).any(true).build();
+        Reservation b = Reservation.builder(Record.class).any(false).build();
+        Assert.assertNotEquals(a, b);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that two {@link Reservation Reservations}
+     * that differ only in their {@link Realms} are not equal.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build two {@link Reservation Reservations} that are identical except
+     * that each is scoped to a different realm.</li>
+     * <li>Compare them with {@code equals}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The two {@link Reservation Reservations} are
+     * not equal.
+     */
+    @Test
+    public void testNotEqualWhenRealmsDiffer() {
+        Reservation a = Reservation.builder(Record.class)
+                .realms(Realms.only("production")).build();
+        Reservation b = Reservation.builder(Record.class)
+                .realms(Realms.only("staging")).build();
+        Assert.assertNotEquals(a, b);
     }
 
     /**

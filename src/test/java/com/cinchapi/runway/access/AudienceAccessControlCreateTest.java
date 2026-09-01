@@ -18,6 +18,11 @@ package com.cinchapi.runway.access;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.runway.Runway;
+import com.cinchapi.runway.Transaction;
+import com.cinchapi.runway.access.AudienceAccessControlInternTest.Gate;
+import com.cinchapi.runway.access.AudienceAccessControlInternTest.Vault;
+
 /**
  * Unit tests for the {@link Audience#create} method and related access control
  * behaviors.
@@ -223,269 +228,208 @@ public class AudienceAccessControlCreateTest
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that the create-permission check of
+     * {@code create} resolves within the {@link Audience Audience's}
+     * transactional scope, so a creation rule that reads through a linked
+     * constructor argument observes the staged state.
+     * <p>
+     * <strong>Start state:</strong> One saved open {@link Gate}, one saved
+     * {@link Admin}, and an open {@link Transaction} that stages the
+     * {@link Gate} closed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Admin} through the {@link Transaction} and stage
+     * {@code open = false} on the {@link Gate} within it.</li>
+     * <li>Call {@code create} on the loaded {@link Admin} for a {@link Vault}
+     * whose gate argument is a copy of the {@link Gate} that was loaded outside
+     * the {@link Transaction}, and catch the expected exception.</li>
+     * <li>{@code commit()} the same {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown
+     * because the creation rule observes the staged closed {@link Gate}, and
+     * the {@link Transaction} still commits.
+     */
     @Test
-    public void testCreateOperationComplexScenario() {
-        // Test a complete workflow scenario
-        Audience anonymous = Audience.anonymous();
-
-        // 1. Anonymous user creates candidate account
-        Candidate candidate = anonymous.create(Candidate.class);
-        candidate.name = "Jane Developer";
-        candidate.email = "jane@email.com";
-        Assert.assertNotNull("Anonymous should create candidate", candidate);
-
-        // 2. Admin creates employer
+    public void testCreatePermissionCheckResolvesWithinAudienceTransaction() {
+        Gate gate = new Gate();
+        gate.open = true;
         Admin admin = new Admin();
         admin.name = "System Admin";
-
-        Employer company = admin.create(Employer.class);
-        company.name = "TechCorp";
-        Assert.assertNotNull("Admin should create employer", company);
-
-        // 3. EmployerUser is created and linked to company
-        EmployerUser employerUser = admin.create(EmployerUser.class);
-        employerUser.name = "HR Manager";
-        employerUser.employer = company;
-        Assert.assertNotNull("Admin should create employer user", employerUser);
-
-        // 4. EmployerUser creates job
-        Job job = employerUser.create(Job.class);
-        job.title = "Backend Developer";
-        job.employer = company;
-        job.published = true;
-        Assert.assertNotNull("EmployerUser should create job", job);
-
-        // 5. Candidate creates application
-        Application application = candidate.create(Application.class);
-        application.candidate = candidate;
-        application.job = job;
-        application.coverLetter = "I'm interested in this position";
-        Assert.assertNotNull("Candidate should create application",
-                application);
-
-        // 6. EmployerUser creates offer
-        Offer offer = employerUser.create(Offer.class);
-        offer.candidate = candidate;
-        offer.job = job;
-        offer.application = application;
-        offer.salary = 100000.0;
-        Assert.assertNotNull("EmployerUser should create offer", offer);
-
-        // Verify the entire workflow completed successfully
-        Assert.assertEquals("Jane Developer", candidate.name);
-        Assert.assertEquals("TechCorp", company.name);
-        Assert.assertEquals("HR Manager", employerUser.name);
-        Assert.assertEquals("Backend Developer", job.title);
-        Assert.assertEquals("I'm interested in this position",
-                application.coverLetter);
-        Assert.assertEquals(100000.0, offer.salary, 0.01);
+        admin.email = "admin@example.com";
+        runway.save(gate, admin);
+        try (Transaction transaction = runway.startTransaction()) {
+            Admin audience = transaction.load(Admin.class, admin.id());
+            Gate staged = transaction.load(Gate.class, gate.id());
+            staged.open = false;
+            transaction.save(staged);
+            Gate outside = runway.load(Gate.class, gate.id());
+            boolean threw = false;
+            try {
+                audience.create(Vault.class, "V-1", outside);
+            }
+            catch (RestrictedAccessException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            Assert.assertTrue(transaction.commit());
+        }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a refused {@code create} through an
+     * {@link Audience} that is bound to an open {@link Transaction} leaves the
+     * constructor-argument records bound as they were, so a later direct save
+     * of one does not stage into the transaction.
+     * <p>
+     * <strong>Start state:</strong> One saved closed {@link Gate} and one saved
+     * {@link Admin}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} in a try-with-resources block and load
+     * the {@link Admin} through it.</li>
+     * <li>Load the {@link Gate} outside the {@link Transaction}.</li>
+     * <li>Call {@code create} on the loaded {@link Admin} for a {@link Vault}
+     * whose gate argument is the outside {@link Gate}, and catch the expected
+     * exception.</li>
+     * <li>Set {@code open = true} on the outside {@link Gate} and save it
+     * directly.</li>
+     * <li>{@code abort()} the same {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown
+     * because the {@link Gate} is closed, and the direct save survives the
+     * abort: a fresh load shows the {@link Gate} open.
+     */
     @Test
-    public void testCreateOperationWithConstructorArguments() {
+    public void testRefusedCreateLeavesArgumentRecordsUnbound() {
+        Gate gate = new Gate();
+        gate.open = false;
         Admin admin = new Admin();
         admin.name = "System Admin";
-
-        // Test create with no constructor arguments
-        Candidate candidate = admin.create(Candidate.class);
-        Assert.assertNotNull("Should create candidate with no constructor args",
-                candidate);
-
-        Job job = admin.create(Job.class);
-        Assert.assertNotNull("Should create job with no constructor args", job);
-
-        Application application = admin.create(Application.class);
-        Assert.assertNotNull(
-                "Should create application with no constructor args",
-                application);
-
-        // Test create with constructor arguments (if the classes had
-        // constructors that took args)
-        // For now, testing that the varargs signature works with no args
-        Employer employer = admin.create(Employer.class, new Object[0]);
-        Assert.assertNotNull(
-                "Should create employer with explicit empty args array",
-                employer);
+        admin.email = "admin@example.com";
+        runway.save(gate, admin);
+        try (Transaction transaction = runway.startTransaction()) {
+            Admin audience = transaction.load(Admin.class, admin.id());
+            Gate outside = runway.load(Gate.class, gate.id());
+            boolean threw = false;
+            try {
+                audience.create(Vault.class, "V-1", outside);
+            }
+            catch (RestrictedAccessException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            outside.open = true;
+            Assert.assertTrue(outside.save());
+            transaction.abort();
+        }
+        Assert.assertTrue(runway.load(Gate.class, gate.id()).open);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a refused {@code create} through an
+     * anonymous {@link Audience} that holds an open {@link Transaction} leaves
+     * the constructor-argument records bound as they were, so a later direct
+     * save of one does not stage into the transaction.
+     * <p>
+     * <strong>Start state:</strong> One saved open {@link Gate}. A
+     * {@link Vault} is never creatable by an anonymous {@link Audience}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} in a try-with-resources block and obtain
+     * an {@link Audience#anonymous(com.cinchapi.runway.DatabaseInterface)
+     * anonymous} {@link Audience} that holds it.</li>
+     * <li>Load the {@link Gate} outside the {@link Transaction}.</li>
+     * <li>Call {@code create} on the anonymous {@link Audience} for a
+     * {@link Vault} whose gate argument is the outside {@link Gate}, and catch
+     * the expected exception.</li>
+     * <li>Set {@code open = false} on the outside {@link Gate} and save it
+     * directly.</li>
+     * <li>{@code abort()} the same {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown
+     * and the direct save survives the abort: a fresh load shows the
+     * {@link Gate} closed.
+     */
     @Test
-    public void testCreateOperationReturnedInstancesAreValid() {
-        Admin admin = new Admin();
-
-        // Verify that created instances are actually instances of the expected
-        // type
-        Candidate candidate = admin.create(Candidate.class);
-        Assert.assertTrue("Created instance should be a Candidate",
-                candidate instanceof Candidate);
-        Assert.assertTrue("Created instance should be a User",
-                candidate instanceof User);
-        Assert.assertTrue("Created instance should implement AccessControl",
-                candidate instanceof AccessControl);
-        Assert.assertTrue("Created instance should implement Audience",
-                candidate instanceof Audience);
-
-        Job job = admin.create(Job.class);
-        Assert.assertTrue("Created instance should be a Job",
-                job instanceof Job);
-        Assert.assertTrue("Created instance should implement AccessControl",
-                job instanceof AccessControl);
-
-        // Verify the instances can be used immediately
-        candidate.name = "Test Candidate";
-        Assert.assertEquals("Should be able to set and get fields",
-                "Test Candidate", candidate.name);
-
-        job.title = "Test Job";
-        Assert.assertEquals("Should be able to set and get fields", "Test Job",
-                job.title);
+    public void testAnonymousRefusedCreateLeavesArgumentRecordsUnbound() {
+        Gate gate = new Gate();
+        gate.open = true;
+        runway.save(gate);
+        try (Transaction transaction = runway.startTransaction()) {
+            Audience anonymous = Audience.anonymous(transaction);
+            Gate outside = runway.load(Gate.class, gate.id());
+            boolean threw = false;
+            try {
+                anonymous.create(Vault.class, "V-1", outside);
+            }
+            catch (RestrictedAccessException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            outside.open = false;
+            Assert.assertTrue(outside.save());
+            transaction.abort();
+        }
+        Assert.assertFalse(runway.load(Gate.class, gate.id()).open);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a refused {@code create} leaves a
+     * constructor-argument record that holds no binding without one, so the
+     * caller can still choose the scope that record saves within.
+     * <p>
+     * <strong>Start state:</strong> A second open {@link Runway}, so a new
+     * record names no database until the caller assigns one. A {@link Vault} is
+     * never creatable by an anonymous {@link Audience}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Open a second {@link Runway} in a try-with-resources block.</li>
+     * <li>Start a {@link Transaction} in a try-with-resources block and obtain
+     * an {@link Audience#anonymous(com.cinchapi.runway.DatabaseInterface)
+     * anonymous} {@link Audience} that holds it.</li>
+     * <li>Construct a {@link Gate} that is never assigned or saved.</li>
+     * <li>Call {@code create} on the anonymous {@link Audience} for a
+     * {@link Vault} whose gate argument is the new {@link Gate}, and catch the
+     * expected exception.</li>
+     * <li>{@code assign} the {@link Gate} to the first {@link Runway} and save
+     * it directly.</li>
+     * <li>{@code abort()} the same {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown,
+     * the {@code assign} is accepted, and the direct save survives the abort:
+     * the first {@link Runway} holds the {@link Gate}.
+     */
     @Test
-    public void testCreateOperationCrossRoleRestrictions() {
-        Admin admin = new Admin();
-        Candidate candidate = new Candidate();
-        EmployerUser employerUser = new EmployerUser();
-
-        // Test that different roles can/cannot create different entity types
-
-        // Job creation - should work for admin and employer, fail for candidate
-        Job adminJob = admin.create(Job.class);
-        Assert.assertNotNull("Admin should successfully create job", adminJob);
-
-        Job employerJob = employerUser.create(Job.class);
-        Assert.assertNotNull("EmployerUser should successfully create job",
-                employerJob);
-
-        try {
-            candidate.create(Job.class);
-            Assert.fail("Candidate should not be able to create jobs");
+    public void testRefusedCreateLeavesUnboundArgumentRecordUnbound()
+            throws Exception {
+        try (Runway second = runwayBuilder().build()) {
+            try (Transaction transaction = runway.startTransaction()) {
+                Audience anonymous = Audience.anonymous(transaction);
+                Gate fresh = new Gate();
+                fresh.open = true;
+                boolean threw = false;
+                try {
+                    anonymous.create(Vault.class, "V-1", fresh);
+                }
+                catch (RestrictedAccessException e) {
+                    threw = true;
+                }
+                Assert.assertTrue(threw);
+                fresh.assign(runway);
+                Assert.assertTrue(fresh.save());
+                transaction.abort();
+            }
+            Assert.assertEquals(1, runway.count(Gate.class));
         }
-        catch (RestrictedAccessException e) {
-            // Expected exception
-        }
-
-        // Application creation - should work for admin and candidate, fail for
-        // employer
-        Application adminApplication = admin.create(Application.class);
-        Assert.assertNotNull("Admin should successfully create application",
-                adminApplication);
-
-        Application candidateApplication = candidate.create(Application.class);
-        Assert.assertNotNull("Candidate should successfully create application",
-                candidateApplication);
-
-        try {
-            employerUser.create(Application.class);
-            Assert.fail(
-                    "EmployerUser should not be able to create applications");
-        }
-        catch (RestrictedAccessException e) {
-            // Expected exception
-        }
-    }
-
-    @Test
-    public void testCreateOperationAnonymousLimitations() {
-        Audience anonymous = Audience.anonymous();
-
-        // Anonymous should only be able to create user accounts
-        Candidate candidate = anonymous.create(Candidate.class);
-        Assert.assertNotNull("Anonymous should create candidate", candidate);
-
-        EmployerUser employerUser = anonymous.create(EmployerUser.class);
-        Assert.assertNotNull("Anonymous should create employer user",
-                employerUser);
-
-        // Anonymous should not be able to create business entities
-        try {
-            anonymous.create(Job.class);
-            Assert.fail("Should have thrown RestrictedAccessException");
-        }
-        catch (RestrictedAccessException e) {
-            // Expected exception
-        }
-
-        try {
-            anonymous.create(Employer.class);
-            Assert.fail("Should have thrown RestrictedAccessException");
-        }
-        catch (RestrictedAccessException e) {
-            // Expected exception
-        }
-
-        try {
-            anonymous.create(Application.class);
-            Assert.fail("Should have thrown RestrictedAccessException");
-        }
-        catch (RestrictedAccessException e) {
-            // Expected exception
-        }
-
-        try {
-            anonymous.create(Offer.class);
-            Assert.fail("Should have thrown RestrictedAccessException");
-        }
-        catch (RestrictedAccessException e) {
-            // Expected exception
-        }
-    }
-
-    @Test
-    public void testCreateOperationRoleBasedRestrictions() {
-        Candidate candidate = new Candidate();
-        candidate.name = "Jane Developer";
-
-        EmployerUser employerUser = new EmployerUser();
-        employerUser.name = "HR Manager";
-
-        // Candidates should not be able to create business-side entities
-        try {
-            candidate.create(Job.class);
-            Assert.fail("Should have thrown RestrictedAccessException");
-        }
-        catch (RestrictedAccessException e) {
-            // Expected exception
-        }
-
-        try {
-            candidate.create(Employer.class);
-            Assert.fail("Should have thrown RestrictedAccessException");
-        }
-        catch (RestrictedAccessException e) {
-            // Expected exception
-        }
-
-        try {
-            candidate.create(Offer.class);
-            Assert.fail("Should have thrown RestrictedAccessException");
-        }
-        catch (RestrictedAccessException e) {
-            // Expected exception
-        }
-
-        // But candidates should be able to create applications
-        Application application = candidate.create(Application.class);
-        Assert.assertNotNull("Candidate should create application",
-                application);
-
-        // EmployerUsers should not be able to create applications
-        try {
-            employerUser.create(Application.class);
-            Assert.fail("Should have thrown RestrictedAccessException");
-        }
-        catch (RestrictedAccessException e) {
-            // Expected exception
-        }
-
-        // But should be able to create jobs, employers, and offers
-        Job job = employerUser.create(Job.class);
-        Assert.assertNotNull("EmployerUser should create job", job);
-
-        Employer employer = employerUser.create(Employer.class);
-        Assert.assertNotNull("EmployerUser should create employer", employer);
-
-        Offer offer = employerUser.create(Offer.class);
-        Assert.assertNotNull("EmployerUser should create offer", offer);
     }
 
 }

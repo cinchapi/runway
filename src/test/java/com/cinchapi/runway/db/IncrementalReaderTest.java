@@ -21,6 +21,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 
@@ -69,6 +70,48 @@ public class IncrementalReaderTest extends ReaderTest {
         Set<Long> ids = resolve(reader, pending);
         Assert.assertTrue(ids.contains(original));
         Assert.assertFalse(ids.contains(postRecording));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the {@link ConnectionPool} constructor
+     * borrows a connection for reads and returns it to the pool on
+     * {@link Reader#close()}.
+     * <p>
+     * <strong>Start state:</strong> One record is added with
+     * {@code flag = true}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct an {@link IncrementalReader} with a
+     * {@link ConnectionPool}.</li>
+     * <li>Record a {@code find} for {@code flag = true} and resolve it.</li>
+     * <li>Close the {@link Reader}, then close the pool.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The resolved result contains the record's id
+     * and the pool closes cleanly because the connection was returned.
+     */
+    @Test
+    public void testConnectionPoolConstructorBorrowsAndReturnsConnection()
+            throws Exception {
+        long id = client.add("flag", true);
+        ConnectionPool pool = ConnectionPool.newCachedConnectionPool(
+                "localhost", server.getClientPort(), "admin", "admin",
+                environment);
+        try {
+            Reader reader = new IncrementalReader(pool);
+            try {
+                Set<Long> ids = resolve(reader, reader.find(Criteria.where()
+                        .key("flag").operator(Operator.EQUALS).value(true)));
+                Assert.assertTrue(ids.contains(id));
+            }
+            finally {
+                reader.close();
+            }
+        }
+        finally {
+            pool.close();
+        }
     }
 
 }

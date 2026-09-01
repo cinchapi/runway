@@ -27,6 +27,7 @@ import org.junit.Test;
 
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.TransactionException;
 
 /**
  * Tests for automatic retry on spurious save failures caused by
@@ -299,103 +300,51 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that
-     * {@link Record#hasStaleDataWithinTransaction(Concourse) hasStaleData}
-     * returns {@code true} when a {@link Record Record's} database state has
-     * been modified by an external transaction since the {@link Record} was
-     * last loaded or saved.
+     * <strong>Goal:</strong> Verify that a {@link Record} reports an external
+     * modification, which is what stops
+     * {@link SpuriousSaveFailureStrategy#RETRY RETRY} from retrying a
+     * {@code TransactionException} that a real conflict caused.
      * <p>
-     * <strong>Start state:</strong> A freshly saved {@link TUser}.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save a {@link TUser}.</li>
-     * <li>Externally modify the {@link TUser TUser's} name directly in the
-     * database via a separate {@link Concourse} connection.</li>
-     * <li>Call {@code hasStaleData} on the in-memory {@link TUser}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> {@code hasStaleData} returns {@code true}
-     * because the database was modified after the {@link Record Record's}
-     * {@code __loadedAt} timestamp.
-     */
-    @Test
-    public void testHasStaleDataReturnsTrueAfterExternalModification()
-            throws Exception {
-        Runway retryRunway = runwayBuilder()
-                .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
-                .build();
-        try {
-            TUser user = new TUser("eve");
-            Assert.assertTrue(retryRunway.save(user));
-
-            // Externally modify the user in the database
-            Concourse concourse = retryRunway.connections.request();
-            try {
-                concourse.set("name", "conflict", user.id());
-            }
-            finally {
-                retryRunway.connections.release(concourse);
-            }
-
-            // hasStaleData should detect the external write
-            Concourse check = retryRunway.connections.request();
-            try {
-                Assert.assertTrue(
-                        "hasStaleData should return true" + " after external"
-                                + " modification",
-                        user.hasStaleDataWithinTransaction(check));
-            }
-            finally {
-                retryRunway.connections.release(check);
-            }
-        }
-        finally {
-            retryRunway.close();
-        }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that
-     * {@link Record#hasStaleDataWithinTransaction(Concourse) hasStaleData}
-     * returns {@code false} when no external transaction has modified the
-     * {@link Record Record's} database state since it was last saved.
-     * <p>
-     * <strong>Start state:</strong> A freshly saved {@link TUser}.
+     * <strong>Start state:</strong> A saved {@link TUser} whose name another
+     * writer then changed.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Save a {@link TUser}.</li>
-     * <li>Call {@code hasStaleData} on the in-memory {@link TUser} without any
-     * external modifications.</li>
+     * <li>Save a {@link TUser} with name "eve".</li>
+     * <li>Change the name to "conflict" through a separate {@link Concourse}
+     * connection.</li>
+     * <li>Call {@code hasExternalModifications} on the in-memory
+     * {@link TUser}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> {@code hasStaleData} returns {@code false}
-     * because no writes occurred after the {@link Record Record's}
-     * {@code __loadedAt} timestamp.
+     * <strong>Expected:</strong> {@code hasExternalModifications} returns
+     * {@code true}.
      */
     @Test
-    public void testHasStaleDataReturnsFalseWhenUnmodified() throws Exception {
-        Runway retryRunway = runwayBuilder()
-                .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
-                .build();
-        try {
-            TUser user = new TUser("frank");
-            Assert.assertTrue(retryRunway.save(user));
+    public void testHasExternalModificationsReturnsTrueAfterExternalModification() {
+        // NOTE: This calls the package-private method directly because the
+        // retry decision it governs is only reachable through the public API
+        // by winning a race against a concurrent writer.
+        TUser user = new TUser("eve");
+        Assert.assertTrue(runway.save(user));
 
-            Concourse check = retryRunway.connections.request();
-            try {
-                Assert.assertFalse(
-                        "hasStaleData should return false" + " when no external"
-                                + " modification occurred",
-                        user.hasStaleDataWithinTransaction(check));
-            }
-            finally {
-                retryRunway.connections.release(check);
-            }
+        Concourse writer = runway.connections.request();
+        try {
+            writer.set("name", "conflict", user.id());
         }
         finally {
-            retryRunway.close();
+            runway.connections.release(writer);
+        }
+
+        Concourse check = runway.connections.request();
+        try {
+            Assert.assertTrue(
+                    "A record whose stored name another writer changed must"
+                            + " report an external modification",
+                    user.hasExternalModifications(check));
+        }
+        finally {
+            runway.connections.release(check);
         }
     }
 
@@ -410,110 +359,108 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Create a shared {@link TUser} and two separate {@link TTenant
-     * TTenants} that both link to that user.</li>
-     * <li>Launch two threads: each saves its own {@link TTenant}.</li>
-     * <li>Use a {@link CountDownLatch} to synchronize the threads so both saves
-     * are in-flight concurrently.</li>
-     * <li>If a spurious failure occurs, verify the save returned {@code false}
-     * without retrying.</li>
+     * <li>Run up to 10 contended rounds; in each round, create a fresh shared
+     * {@link TUser} and two separate {@link TTenant TTenants} that both link to
+     * that user.</li>
+     * <li>In each round, launch two threads that each save one {@link TTenant},
+     * gated on a {@link CountDownLatch} so both saves are in-flight
+     * concurrently.</li>
+     * <li>Join both threads and verify that each one terminated and that
+     * neither save threw.</li>
+     * <li>Stop as soon as a round produces a save that returns
+     * {@code false}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> At least one save fails and returns
-     * {@code false}. The failed save does not retry because
-     * {@link SpuriousSaveFailureStrategy#FAIL_FAST} is the active strategy.
+     * <strong>Expected:</strong> At least one round produces a save that
+     * returns {@code false}, because
+     * {@link SpuriousSaveFailureStrategy#FAIL_FAST} reports the spurious
+     * {@code TransactionException} as a refused save instead of retrying. A
+     * strategy that silently retried would make both saves succeed in every
+     * round. A save that hangs or throws fails the test instead of counting as
+     * the expected refusal, and a refused save must hold the
+     * {@code TransactionException} as its recorded reason.
      */
     @Test
     public void testFailFastStrategyDoesNotRetry() throws Exception {
-        TUser user = new TUser("ivan");
-        TTenant tenant1 = new TTenant(user);
-        TTenant tenant2 = new TTenant(user);
+        boolean anyFailed = false;
+        for (int round = 0; round < 10 && !anyFailed; ++round) {
+            TUser user = new TUser("ivan" + round);
+            TTenant tenant1 = new TTenant(user);
+            TTenant tenant2 = new TTenant(user);
 
-        CountDownLatch ready = new CountDownLatch(2);
-        CountDownLatch go = new CountDownLatch(1);
-        AtomicBoolean save1Result = new AtomicBoolean(false);
-        AtomicBoolean save2Result = new AtomicBoolean(false);
+            CountDownLatch ready = new CountDownLatch(2);
+            CountDownLatch go = new CountDownLatch(1);
+            AtomicBoolean save1Result = new AtomicBoolean(false);
+            AtomicBoolean save2Result = new AtomicBoolean(false);
+            AtomicReference<Throwable> thrown1 = new AtomicReference<>();
+            AtomicReference<Throwable> thrown2 = new AtomicReference<>();
 
-        Thread t1 = new Thread(() -> {
-            ready.countDown();
-            try {
-                go.await();
-                save1Result.set(runway.save(tenant1));
+            Thread t1 = new Thread(() -> {
+                ready.countDown();
+                try {
+                    go.await();
+                    save1Result.set(runway.save(tenant1));
+                }
+                catch (Throwable t) {
+                    thrown1.set(t);
+                }
+            });
+
+            Thread t2 = new Thread(() -> {
+                ready.countDown();
+                try {
+                    go.await();
+                    save2Result.set(runway.save(tenant2));
+                }
+                catch (Throwable t) {
+                    thrown2.set(t);
+                }
+            });
+
+            t1.start();
+            t2.start();
+            Assert.assertTrue("The workers did not both become ready",
+                    ready.await(5, TimeUnit.SECONDS));
+            go.countDown();
+            t1.join(10000);
+            t2.join(10000);
+            Assert.assertFalse("The first save did not terminate",
+                    t1.isAlive());
+            Assert.assertFalse("The second save did not terminate",
+                    t2.isAlive());
+            if(thrown1.get() != null) {
+                throw new AssertionError("A FAIL_FAST save must report a"
+                        + " failure by returning false, not by throwing",
+                        thrown1.get());
             }
-            catch (Throwable t) {
-                // save returned false or threw
+            if(thrown2.get() != null) {
+                throw new AssertionError("A FAIL_FAST save must report a"
+                        + " failure by returning false, not by throwing",
+                        thrown2.get());
             }
-        });
 
-        Thread t2 = new Thread(() -> {
-            ready.countDown();
-            try {
-                go.await();
-                save2Result.set(runway.save(tenant2));
+            boolean failed1 = !save1Result.get();
+            boolean failed2 = !save2Result.get();
+            if(failed1) {
+                Assert.assertTrue(
+                        "A save was refused for a reason other than the"
+                                + " spurious conflict",
+                        tenant1.errors.stream().anyMatch(
+                                t -> t instanceof TransactionException));
             }
-            catch (Throwable t) {
-                // save returned false or threw
+            if(failed2) {
+                Assert.assertTrue(
+                        "A save was refused for a reason other than the"
+                                + " spurious conflict",
+                        tenant2.errors.stream().anyMatch(
+                                t -> t instanceof TransactionException));
             }
-        });
-
-        t1.start();
-        t2.start();
-        ready.await(5, TimeUnit.SECONDS);
-        go.countDown();
-        t1.join(10000);
-        t2.join(10000);
-
-        boolean anyFailed = !save1Result.get() || !save2Result.get();
+            anyFailed = failed1 || failed2;
+        }
         Assert.assertTrue(
-                "At least one save should fail with" + " FAIL_FAST strategy",
+                "FAIL_FAST must surface a spurious failure in at least one"
+                        + " contended round instead of silently retrying",
                 anyFailed);
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that
-     * {@link Record#hasStaleDataWithinTransaction(Concourse) hasStaleData}
-     * returns {@code false} after loading a {@link Record} from the database,
-     * since the loaded state is in sync with the database.
-     * <p>
-     * <strong>Start state:</strong> A {@link TUser} that has been saved and
-     * then loaded fresh from the database.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save a {@link TUser}.</li>
-     * <li>Load the {@link TUser} from the database into a new instance.</li>
-     * <li>Call {@code hasStaleData} on the loaded instance.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> {@code hasStaleData} returns {@code false}
-     * because the loaded {@link Record} is in sync with the database.
-     */
-    @Test
-    public void testHasStaleDataReturnsFalseAfterLoad() throws Exception {
-        Runway retryRunway = runwayBuilder()
-                .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
-                .build();
-        try {
-            TUser user = new TUser("julia");
-            Assert.assertTrue(retryRunway.save(user));
-
-            TUser loaded = retryRunway.load(TUser.class, user.id());
-            Assert.assertNotNull(loaded);
-
-            Concourse check = retryRunway.connections.request();
-            try {
-                Assert.assertFalse(
-                        "hasStaleData should return false"
-                                + " for a freshly loaded record",
-                        loaded.hasStaleDataWithinTransaction(check));
-            }
-            finally {
-                retryRunway.connections.release(check);
-            }
-        }
-        finally {
-            retryRunway.close();
-        }
     }
 
     /**

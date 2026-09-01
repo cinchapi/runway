@@ -22,3 +22,6 @@ hs_err_pid*
 concourse_client.prefs
 .counter
 gradle.properties
+
+# macOS Finder artifacts
+.DS_Store

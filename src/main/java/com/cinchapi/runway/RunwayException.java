@@ -33,4 +33,14 @@ public class RunwayException extends RuntimeException {
         super(message);
     }
 
+    /**
+     * Construct a new instance.
+     *
+     * @param message the error message
+     * @param cause the underlying cause
+     */
+    public RunwayException(String message, Throwable cause) {
+        super(message, cause);
+    }
+
 }

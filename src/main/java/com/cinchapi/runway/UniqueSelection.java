@@ -71,6 +71,11 @@ final class UniqueSelection<T extends Record> extends DatabaseSelection<T> {
     }
 
     @Override
+    Object $emptyResultConstant() {
+        return null;
+    }
+
+    @Override
     boolean isCombinable() {
         return false;
     }

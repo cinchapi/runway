@@ -69,6 +69,11 @@ final class CountSelection<T extends Record> extends DatabaseSelection<T> {
     }
 
     @Override
+    Object $emptyResultConstant() {
+        return 0;
+    }
+
+    @Override
     boolean isCombinable() {
         return false;
     }

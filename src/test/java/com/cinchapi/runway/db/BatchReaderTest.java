@@ -21,6 +21,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 
@@ -104,7 +105,7 @@ public class BatchReaderTest extends ReaderTest {
         reader.find(Criteria.where().key("score")
                 .operator(Operator.GREATER_THAN).value(0))
                 .onResolve(ids -> secondFired[0] = true);
-        reader.concourse().close();
+        ((AbstractReader) reader).concourse().close();
 
         RuntimeException failure = null;
         try {
@@ -118,6 +119,47 @@ public class BatchReaderTest extends ReaderTest {
         Assert.assertNotNull(failure);
         Assert.assertFalse("first sink should not have fired", firstFired[0]);
         Assert.assertFalse("second sink should not have fired", secondFired[0]);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the {@link ConnectionPool} constructor
+     * borrows a connection for reads and returns it to the pool on
+     * {@link Reader#close()}.
+     * <p>
+     * <strong>Start state:</strong> One record is added with
+     * {@code flag = true}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link BatchReader} with a {@link ConnectionPool}.</li>
+     * <li>Record a {@code find} for {@code flag = true} and resolve it.</li>
+     * <li>Close the {@link Reader}, then close the pool.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The resolved result contains the record's id
+     * and the pool closes cleanly because the connection was returned.
+     */
+    @Test
+    public void testConnectionPoolConstructorBorrowsAndReturnsConnection()
+            throws Exception {
+        long id = client.add("flag", true);
+        ConnectionPool pool = ConnectionPool.newCachedConnectionPool(
+                "localhost", server.getClientPort(), "admin", "admin",
+                environment);
+        try {
+            Reader reader = new BatchReader(pool);
+            try {
+                Set<Long> ids = resolve(reader, reader.find(Criteria.where()
+                        .key("flag").operator(Operator.EQUALS).value(true)));
+                Assert.assertTrue(ids.contains(id));
+            }
+            finally {
+                reader.close();
+            }
+        }
+        finally {
+            pool.close();
+        }
     }
 
 }

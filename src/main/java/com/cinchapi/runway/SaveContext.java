@@ -16,8 +16,7 @@
 package com.cinchapi.runway;
 
 import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Collection;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
@@ -25,6 +24,8 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 import javax.annotation.Nullable;
 
@@ -34,8 +35,8 @@ import javax.annotation.Nullable;
  * A save can process multiple in-memory instances of the same logical record
  * (e.g., the caller's instance alongside a copy loaded for
  * {@link CaptureDelete} or {@link JoinDelete} handling). The context keeps one
- * entry per record id that pairs the instance that currently speaks for the
- * record with the record's {@link Outcome}.
+ * entry per record id that pairs the record's {@link Outcome} with its speaking
+ * instance: the latest instance that reported the record's highest outcome.
  * </p>
  * <p>
  * An {@link Outcome} is monotonic: it only ever rises from {@link Outcome#CLEAN
@@ -49,10 +50,32 @@ import javax.annotation.Nullable;
  * {@link CascadeDelete} and {@link JoinDelete} schedule. Snapshots survive
  * {@link #reset() retry attempts}; all other state is per-attempt.
  * </p>
+ * <p>
+ * A save within a {@link Transaction} also treats the ids that the
+ * transaction's earlier saves deleted as {@link #isDeleted(long) deleted}, so a
+ * deletion stays final across the saves that share a commit.
+ * </p>
  *
  * @author Jeff Nelson
  */
 final class SaveContext {
+
+    /**
+     * An {@link #admit(Record) admission} that accepts every {@link Record}.
+     */
+    private static final Consumer<Record> NO_ADMISSION = record -> {};
+
+    /**
+     * The check that every {@link Record} must pass when it
+     * {@link #admit(Record) enters} the save.
+     */
+    private final Consumer<Record> admission;
+
+    /**
+     * The state that each record stored at the moment the active attempt
+     * deleted it, keyed by record id.
+     */
+    private final Map<Long, Map<String, Set<Object>>> deletionData = new HashMap<>();
 
     /**
      * One {@link Entry} per record id processed within the active attempt.
@@ -72,29 +95,114 @@ final class SaveContext {
     private final Deque<Record> pendingDeletions = new ArrayDeque<>();
 
     /**
-     * Whether the save rejects any {@link Record} that has been externally
-     * modified.
+     * The ids of records that earlier saves in the same transaction deleted.
+     */
+    private final Set<Long> priorDeletions;
+
+    /**
+     * Whether the save captures the state that a record of a given class stored
+     * when the save deletes it.
+     */
+    private final Predicate<Class<? extends Record>> shouldCaptureDeletionData;
+
+    /**
+     * Whether the save fails if it would overwrite a value that another writer
+     * changed.
      */
     private final boolean shouldPreventStaleWrite;
 
     /**
-     * Construct a new instance.
+     * Construct a new instance that captures no deletion state, so it serves as
+     * a {@link #merge(SaveContext) merge} target rather than as the context of
+     * a staged save. A save staged through it reports an empty
+     * {@link #deletionData(long) deletion state} to every delete listener.
      *
-     * @param shouldPreventStaleWrite whether the save rejects any
-     *            {@link Record} that has been externally modified
+     * @param shouldPreventStaleWrite whether the save fails if it would
+     *            overwrite a value that another writer changed
      */
     SaveContext(boolean shouldPreventStaleWrite) {
-        this.shouldPreventStaleWrite = shouldPreventStaleWrite;
+        this(shouldPreventStaleWrite, clazz -> false, NO_ADMISSION);
     }
 
     /**
-     * Add {@code record} as the instance that speaks for its id. The record's
-     * {@link Outcome} is not affected.
+     * Construct a new instance whose {@code admission} checks every
+     * {@link Record} that enters the save.
+     *
+     * @param shouldPreventStaleWrite whether the save fails if it would
+     *            overwrite a value that another writer changed
+     * @param shouldCaptureDeletionData whether the save captures the state that
+     *            a record of a given class stored when the save deletes it
+     * @param admission the check that every {@link Record} must pass when it
+     *            enters the save
+     */
+    SaveContext(boolean shouldPreventStaleWrite,
+            Predicate<Class<? extends Record>> shouldCaptureDeletionData,
+            Consumer<Record> admission) {
+        this(shouldPreventStaleWrite, shouldCaptureDeletionData,
+                Collections.emptySet(), admission);
+    }
+
+    /**
+     * Construct a new instance for a save within a transaction whose earlier
+     * saves deleted the {@code priorDeletions}.
+     *
+     * @param shouldPreventStaleWrite whether the save fails if it would
+     *            overwrite a value that another writer changed
+     * @param shouldCaptureDeletionData whether the save captures the state that
+     *            a record of a given class stored when the save deletes it
+     * @param priorDeletions the ids of records that earlier saves in the same
+     *            transaction deleted
+     * @param admission the check that every {@link Record} must pass when it
+     *            enters the save
+     */
+    SaveContext(boolean shouldPreventStaleWrite,
+            Predicate<Class<? extends Record>> shouldCaptureDeletionData,
+            Set<Long> priorDeletions, Consumer<Record> admission) {
+        this.shouldPreventStaleWrite = shouldPreventStaleWrite;
+        this.shouldCaptureDeletionData = shouldCaptureDeletionData;
+        this.priorDeletions = priorDeletions;
+        this.admission = admission;
+    }
+
+    /**
+     * Add {@code record} as a processed instance of its id. The record becomes
+     * the speaking instance only while the id's {@link Outcome} is still
+     * {@link Outcome#CLEAN CLEAN}; the {@link Outcome} itself is not affected.
      *
      * @param record the instance that is currently processed by the save
      */
     void add(Record record) {
-        entry(record).instance = record;
+        raise(record, Outcome.CLEAN);
+    }
+
+    /**
+     * Apply the save's admission check to {@code record} as it enters the save.
+     *
+     * @param record the {@link Record} that enters the save
+     * @throws IllegalStateException if the {@link Record} cannot participate in
+     *             the save (e.g., it is bound to a different open
+     *             {@link Transaction})
+     */
+    void admit(Record record) {
+        admission.accept(record);
+    }
+
+    /**
+     * Return the ids of every record whose deletion binds the active attempt:
+     * the attempt's own {@link #deletions() deletions} and the ids that earlier
+     * saves in the same transaction deleted.
+     *
+     * @return the deleted ids
+     */
+    Set<Long> allDeletions() {
+        if(priorDeletions.isEmpty()) {
+            return deletions();
+        }
+        else {
+            Set<Long> ids = new LinkedHashSet<>(priorDeletions);
+            ids.addAll(deletions());
+            return ids;
+        }
     }
 
     /**
@@ -117,6 +225,18 @@ final class SaveContext {
      */
     boolean contains(Record record) {
         return contains(record.id());
+    }
+
+    /**
+     * Return the state that the record with {@code id} stored when the active
+     * attempt deleted it.
+     *
+     * @param id the record id
+     * @return the stored state, or an empty {@link Map} if the attempt did not
+     *         delete the record or did not capture deletion state
+     */
+    Map<String, Set<Object>> deletionData(long id) {
+        return deletionData.getOrDefault(id, Collections.emptyMap());
     }
 
     /**
@@ -148,6 +268,17 @@ final class SaveContext {
     }
 
     /**
+     * Dispatch every snapshotted {@link Record} and its {@link Record.Snapshot}
+     * to the {@code consumer}.
+     *
+     * @param consumer the consumer that accepts each {@link Record} and its
+     *            snapshot
+     */
+    void forEachSnapshot(BiConsumer<Record, Record.Snapshot> consumer) {
+        snapshots.forEach(consumer);
+    }
+
+    /**
      * Return the instance that speaks for the record with {@code id}, or
      * {@code null} if the active attempt has not processed the id.
      *
@@ -161,20 +292,26 @@ final class SaveContext {
     }
 
     /**
-     * Return {@code true} if the active attempt deleted the record with
-     * {@code id}.
+     * Return {@code true} if the active attempt, or an earlier save in the same
+     * transaction, deleted the record with {@code id}.
      *
      * @param id the record id to test
      * @return {@code true} if the record was deleted
      */
     boolean isDeleted(long id) {
         Entry entry = entries.get(id);
-        return entry != null && entry.outcome == Outcome.DELETED;
+        if(entry != null && entry.outcome == Outcome.DELETED) {
+            return true;
+        }
+        else {
+            return priorDeletions.contains(id);
+        }
     }
 
     /**
      * Record that the active attempt stages data changes for {@code record} and
-     * make it the instance that speaks for its id.
+     * make it the instance that speaks for its id, unless the record was
+     * already deleted.
      *
      * @param record the {@link Record} whose data the save changes
      */
@@ -193,6 +330,34 @@ final class SaveContext {
     }
 
     /**
+     * Merge {@code record} and its {@code outcome} from another
+     * {@link SaveContext} into this one, under the same rule that governs a
+     * single save: the record's {@link Outcome} only rises, and {@code record}
+     * becomes the speaking instance only if {@code outcome} is at least the
+     * current one.
+     *
+     * @param record an instance that another {@link SaveContext} processed
+     * @param outcome the {@link Outcome} that the other context recorded for
+     *            the instance
+     */
+    void merge(Record record, Outcome outcome) {
+        raise(record, outcome);
+    }
+
+    /**
+     * Merge every {@link Record}, {@link Outcome} and captured deletion state
+     * from {@code context} into this one. When more than one context captured
+     * deletion state for the same record, the state from the earliest merge is
+     * the one that survives.
+     *
+     * @param context the {@link SaveContext} to merge
+     */
+    void merge(SaveContext context) {
+        context.forEach(this::merge);
+        context.deletionData.forEach(deletionData::putIfAbsent);
+    }
+
+    /**
      * Remove and return the next {@link Record} that a companion deletion
      * scheduled, or {@code null} if none remain.
      *
@@ -204,17 +369,14 @@ final class SaveContext {
     }
 
     /**
-     * Return the instance that speaks for each record processed within the
-     * active attempt.
+     * Capture the state that the record with {@code id} stored at the moment
+     * the active attempt deleted it.
      *
-     * @return the speaking instances
+     * @param id the record id
+     * @param data the record's stored state
      */
-    Collection<Record> records() {
-        Collection<Record> records = new ArrayList<>(entries.size());
-        for (Entry entry : entries.values()) {
-            records.add(entry.instance);
-        }
-        return records;
+    void recordDeletionData(long id, Map<String, Set<Object>> data) {
+        deletionData.put(id, data);
     }
 
     /**
@@ -224,6 +386,7 @@ final class SaveContext {
     void reset() {
         entries.clear();
         pendingDeletions.clear();
+        deletionData.clear();
     }
 
     /**
@@ -245,8 +408,19 @@ final class SaveContext {
     }
 
     /**
-     * Return whether the save rejects any {@link Record} that has been
-     * externally modified.
+     * Return whether the save captures the state that a record of {@code clazz}
+     * stored when the save deletes it.
+     *
+     * @param clazz the deleted {@link Record Record's} class
+     * @return {@code true} if deletion state is captured for {@code clazz}
+     */
+    boolean shouldCaptureDeletionData(Class<? extends Record> clazz) {
+        return shouldCaptureDeletionData.test(clazz);
+    }
+
+    /**
+     * Return whether the save fails if it would overwrite a value that another
+     * writer changed.
      *
      * @return {@code true} if stale writes are rejected
      */
@@ -278,18 +452,22 @@ final class SaveContext {
     }
 
     /**
-     * Make {@code record} the instance that speaks for its id and raise the
-     * record's {@link Outcome} to {@code outcome} if it is higher than the
-     * current one.
+     * Raise the record's {@link Outcome} to {@code outcome} if it is higher
+     * than the current one, and make {@code record} the instance that speaks
+     * for its id if {@code outcome} is at least the current one.
      *
      * @param record the instance that reports the fact
      * @param outcome the {@link Outcome} to raise to
      */
     private void raise(Record record, Outcome outcome) {
         Entry entry = entry(record);
-        entry.instance = record;
-        if(outcome.compareTo(entry.outcome) > 0) {
+        if(outcome.compareTo(entry.outcome) >= 0) {
+            entry.instance = record;
             entry.outcome = outcome;
+        }
+        else {
+            // The instance that reported the higher outcome keeps speaking
+            // for the id.
         }
     }
 

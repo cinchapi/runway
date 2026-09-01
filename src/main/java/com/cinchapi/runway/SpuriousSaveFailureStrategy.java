@@ -34,9 +34,10 @@ package com.cinchapi.runway;
 public enum SpuriousSaveFailureStrategy {
 
     /**
-     * Immediately propagate any {@code TransactionException} that occurs during
-     * a save, regardless of whether the failure is spurious. This is the legacy
-     * behavior.
+     * Never retry a {@code TransactionException} that occurs during a save,
+     * even when the failure is spurious. The save reports the failure as a
+     * refusal: it returns {@code false} and the offending {@link Record} holds
+     * the reason for {@link Record#throwSupressedExceptions()}.
      */
     FAIL_FAST,
 
@@ -44,8 +45,11 @@ public enum SpuriousSaveFailureStrategy {
      * When a {@code TransactionException} occurs during a save, check whether
      * any of the {@link Record Records} involved have stale data. If none do,
      * the failure is spurious and the save is automatically retried in a new
-     * transaction. If any {@link Record} has stale data, the failure represents
-     * a real conflict and the {@code TransactionException} is thrown.
+     * transaction. If any {@link Record} has stale data, the failure is a real
+     * conflict and the save reports it as a refusal: it returns {@code false}
+     * and the offending {@link Record} holds the reason for
+     * {@link Record#throwSupressedExceptions()}. A spurious failure that
+     * persists through every retry is reported the same way.
      */
     RETRY;
 }

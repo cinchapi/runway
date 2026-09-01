@@ -42,8 +42,19 @@ public class RetryExhaustedException extends RunwayException {
      * @param attempts the number of attempts that were made before giving up
      */
     public RetryExhaustedException(int attempts) {
+        this(attempts, null);
+    }
+
+    /**
+     * Construct a new instance.
+     *
+     * @param attempts the number of attempts that were made before giving up
+     * @param cause the final conflict that exhausted the retries, or
+     *            {@code null} when the retries ended without a caught conflict
+     */
+    public RetryExhaustedException(int attempts, Throwable cause) {
         super("Failed to atomically commit after " + attempts
-                + " attempts due to persistent write contention");
+                + " attempts due to persistent write contention", cause);
         this.attempts = attempts;
     }
 

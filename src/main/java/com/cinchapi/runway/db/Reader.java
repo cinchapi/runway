@@ -36,9 +36,8 @@ import com.cinchapi.concourse.lang.sort.Order;
  * </p>
  * <p>
  * A {@link Reader} is {@link AutoCloseable}: implementations that manage their
- * own {@link com.cinchapi.concourse.ConnectionPool ConnectionPool}-backed
- * {@link Concourse} connection release it on {@link #close()}, making
- * try-with-resources the recommended usage pattern.
+ * own {@link ConcourseProvider}-backed {@link Concourse} connection release it
+ * on {@link #close()}, making try-with-resources the recommended usage pattern.
  * </p>
  *
  * @author Jeff Nelson
@@ -164,27 +163,6 @@ public interface Reader extends AutoCloseable {
     Pending<Map<String, Set<Object>>> select(Set<String> keys, long record);
 
     /**
-     * Record a select for the values stored under {@code key} in
-     * {@code record}.
-     *
-     * @param key the field name whose values should be returned
-     * @param record the record id
-     * @return a {@link Pending} of the values for {@code key}
-     */
-    Pending<Set<Object>> select(String key, long record);
-
-    /**
-     * Record a get for the most recent value stored under {@code key} in
-     * {@code record}.
-     *
-     * @param key the field name whose value should be returned
-     * @param record the record id
-     * @return a {@link Pending} of the most recent value, or {@code null} if no
-     *         value exists
-     */
-    Pending<Object> get(String key, long record);
-
-    /**
      * Record a navigate that traverses the {@code keys} starting from
      * {@code record}.
      *
@@ -239,16 +217,6 @@ public interface Reader extends AutoCloseable {
     Pending<Long> count(String key, Criteria criteria);
 
     /**
-     * Return the underlying {@link Concourse} connection that this
-     * {@link Reader} wraps, acquiring one from the
-     * {@link com.cinchapi.concourse.ConnectionPool ConnectionPool} if the
-     * connection has not yet been needed.
-     *
-     * @return the {@link Concourse} connection
-     */
-    Concourse concourse();
-
-    /**
      * Issue every deferred read recorded on this {@link Reader} and resolve
      * every {@link Pending} obtained from it. May be called repeatedly: a
      * subsequent call processes any reads recorded since the previous call, and
@@ -257,10 +225,9 @@ public interface Reader extends AutoCloseable {
     void drain();
 
     /**
-     * Release any {@link com.cinchapi.concourse.ConnectionPool
-     * ConnectionPool}-backed {@link Concourse} connection that this
-     * {@link Reader} acquired. Safe to call when no connection was ever
-     * acquired; idempotent on repeated calls. Implementations that wrap an
+     * Release any {@link ConcourseProvider}-backed {@link Concourse} connection
+     * that this {@link Reader} acquired. Safe to call when no connection was
+     * ever acquired; idempotent on repeated calls. Implementations that wrap an
      * externally-managed {@link Concourse} treat this as a no-op &mdash; the
      * connection lifecycle remains with the caller.
      */

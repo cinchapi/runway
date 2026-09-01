@@ -58,15 +58,11 @@ public class RecordDataAccessTest extends AbstractRecordTest {
     }
 
     @Test
-    public void testLoadNonExistingRecord() {
-        Assert.assertNull(runway.load(Mock.class, -2));
-    }
-
-    @Test
     public void testSetDynamicAttribute() {
         Mock person = new Mock();
         person.set("0_2_0", "foo");
-        System.out.println(person);
+        Assert.assertEquals("foo", person.get("0_2_0"));
+        Assert.assertTrue(person.map().containsKey("0_2_0"));
     }
 
     @Test

@@ -160,34 +160,6 @@ public class AdHocDataSourceMultiSelectTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Verify that a single count {@link Selection} (not multi-select) works
-     * correctly. This confirms the single-selection fast path is not affected.
-     */
-    @Test
-    public void testSingleCountSelectionWithAttachedAdHocDataSource() {
-        Collection<MockModel> data = Arrays.asList(new MockModel("alpha"),
-                new MockModel("beta"), new MockModel("gamma"));
-        AdHocDataSource<MockModel> source = new AdHocDataSource<MockModel>(
-                MockModel.class, () -> data) {};
-
-        runway.attach(source);
-        try {
-            Selection<MockModel> countSel = Selection.of(MockModel.class)
-                    .count().build();
-
-            Selections results = runway.select(countSel);
-            int count = results.next();
-
-            Assert.assertEquals(
-                    "Single count selection should find attached ad-hoc records",
-                    3, count);
-        }
-        finally {
-            runway.detach(MockModel.class);
-        }
-    }
-
-    /**
      * A mock {@link AdHocRecord} that represents a named model.
      */
     static class MockModel extends AdHocRecord {

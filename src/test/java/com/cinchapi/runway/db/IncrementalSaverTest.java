@@ -21,8 +21,8 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.concourse.Concourse;
-import com.cinchapi.concourse.lang.Criteria;
-import com.cinchapi.concourse.thrift.Operator;
+import com.cinchapi.concourse.Timestamp;
+import com.cinchapi.concourse.time.Time;
 
 /**
  * Unit tests for {@link IncrementalSaver} that combine the shared {@link Saver}
@@ -39,8 +39,8 @@ public class IncrementalSaverTest extends SaverTest {
 
     /**
      * <strong>Goal:</strong> Verify that {@link IncrementalSaver} runs the
-     * audit {@link java.util.function.Consumer validator} at the moment
-     * {@code audit} is called &mdash; not later during commit &mdash; so a
+     * difference {@link java.util.function.Consumer validator} at the moment
+     * {@code diff} is called &mdash; not later during commit &mdash; so a
      * throwing validator stops further recording.
      * <p>
      * <strong>Start state:</strong> A record exists with one value.
@@ -48,68 +48,31 @@ public class IncrementalSaverTest extends SaverTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Stage the {@link IncrementalSaver}.</li>
-     * <li>Record an {@code audit} whose validator throws.</li>
+     * <li>Record a {@code diff} whose validator throws.</li>
      * <li>Catch the exception.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The exception arrives from the {@code audit}
+     * <strong>Expected:</strong> The exception arrives from the {@code diff}
      * call itself, not from a later {@code commit}.
      */
     @Test
-    public void testAuditValidatorRunsInline() {
+    public void testDiffValidatorRunsInline() {
         long id = client.add("a", 1);
 
         Saver saver = newSaver();
         saver.stage();
-        AtomicBoolean threwOnAudit = new AtomicBoolean(false);
+        AtomicBoolean threwOnDiff = new AtomicBoolean(false);
         try {
-            saver.audit(id, audit -> {
+            saver.diff(id, Timestamp.fromMicros(Time.now()), null, diff -> {
                 throw new IllegalStateException("nope");
             });
         }
         catch (IllegalStateException e) {
-            threwOnAudit.set(true);
+            threwOnDiff.set(true);
         }
         saver.abort();
 
-        Assert.assertTrue(threwOnAudit.get());
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that an {@link IncrementalSaver}
-     * {@code find} validator runs inline.
-     * <p>
-     * <strong>Start state:</strong> A record matching {@code flag = true}.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Stage.</li>
-     * <li>Record a {@code find} whose validator throws.</li>
-     * <li>Catch the exception.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The exception arrives from the {@code find}
-     * call.
-     */
-    @Test
-    public void testFindValidatorRunsInline() {
-        client.add("flag", true);
-
-        Saver saver = newSaver();
-        saver.stage();
-        AtomicBoolean threwOnFind = new AtomicBoolean(false);
-        try {
-            saver.find(Criteria.where().key("flag").operator(Operator.EQUALS)
-                    .value(true), ids -> {
-                        throw new IllegalStateException("nope");
-                    });
-        }
-        catch (IllegalStateException e) {
-            threwOnFind.set(true);
-        }
-        saver.abort();
-
-        Assert.assertTrue(threwOnFind.get());
+        Assert.assertTrue(threwOnDiff.get());
     }
 
 }

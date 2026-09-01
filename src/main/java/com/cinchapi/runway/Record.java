@@ -22,7 +22,6 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.util.AbstractMap;
 import java.util.AbstractMap.SimpleEntry;
 import java.util.AbstractMap.SimpleImmutableEntry;
@@ -43,8 +42,10 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -77,16 +78,16 @@ import com.cinchapi.common.describe.Empty;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
+import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.Timestamp;
-import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.ConcourseCompiler;
 import com.cinchapi.concourse.lang.Criteria;
-import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.server.io.Serializables;
+import com.cinchapi.concourse.thrift.Diff;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.ByteBuffers;
@@ -95,7 +96,9 @@ import com.cinchapi.concourse.util.Numbers;
 import com.cinchapi.concourse.util.Parsers;
 import com.cinchapi.concourse.util.TypeAdapters;
 import com.cinchapi.concourse.validate.Keys;
+import com.cinchapi.runway.db.ConcourseProvider;
 import com.cinchapi.runway.db.Saver;
+import com.cinchapi.runway.db.Saver.Timing;
 import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.util.ComputedEntry;
@@ -115,8 +118,6 @@ import com.google.common.collect.Multimap;
 import com.google.common.collect.Ordering;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
-import com.google.common.hash.Hasher;
-import com.google.common.hash.Hashing;
 import com.google.common.io.BaseEncoding;
 import com.google.common.primitives.Longs;
 import com.google.common.primitives.Primitives;
@@ -129,15 +130,26 @@ import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonWriter;
 
 /**
- * A {@link Record} is a a wrapper around the same in {@link Concourse} that
- * facilitates object-oriented interaction while automatically preserving
- * transactional security.
+ * A {@link Record} is a wrapper around a {@link Concourse} record that supports
+ * object-oriented interaction while automatically preserving transactional
+ * security.
  * <p>
  * Each subclass defines its "schema" through {@code non-transient} member
  * variables. When a Record is loaded from Concourse, the member variables are
  * automatically populated with information from the database. And, when a
  * Record is {@link #save() saved}, the values of those variables (including any
  * changes) will automatically be stored/updated in Concourse.
+ * </p>
+ * <h2>Database Binding</h2>
+ * <p>
+ * Every {@link Record} is bound to the {@link DatabaseInterface} that its reads
+ * and saves resolve against: the {@link Runway} instance it is
+ * {@link #assign(Runway) assigned} to, or the {@link Transaction} through which
+ * it is loaded, saved, or created. A {@link Record} bound to a {@link Runway}
+ * persists directly to the database. A {@link Record} bound to a
+ * {@link Transaction} stages within it, and the staged changes become durable
+ * when the transaction commits; after the transaction ends, the {@link Record}
+ * operates against the enclosing {@link Runway}.
  * </p>
  * <h2>Variable Modifiers</h2>
  * <p>
@@ -201,17 +213,29 @@ public abstract class Record implements Comparable<Record> {
      * @return the loaded Record
      */
     protected static <T extends Record> T load(Class<?> clazz, long id,
+            ConcurrentMap<Long, Record> existing, ConcourseProvider connections,
+            Runway runway, @Nullable Map<String, Set<Object>> data,
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
+        return load(clazz, id, existing, connections, (Binding) runway, data,
+                targets);
+    }
+
+    /**
+     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
+     * {@code id}.
+     *
+     * @param clazz
+     * @param id
+     * @param existing
+     * @param connections
+     * @return the loaded Record
+     */
+    protected static <T extends Record> T load(Class<?> clazz, long id,
             ConcurrentMap<Long, Record> existing, ConnectionPool connections,
             Runway runway, @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
-        Concourse concourse = connections.request();
-        try {
-            return load(clazz, id, existing, connections, concourse, runway,
-                    data, null, targets);
-        }
-        finally {
-            connections.release(concourse);
-        }
+        return load(clazz, id, existing, ConcourseProvider.from(connections),
+                runway, data, targets);
     }
 
     /**
@@ -278,6 +302,97 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
+     * {@code id} and bind it to {@code binding}.
+     *
+     * @param clazz
+     * @param id
+     * @param existing
+     * @param connections
+     * @param binding the {@link Binding} that scopes the {@link Record
+     *            Record's} operations
+     * @return the loaded Record
+     */
+    static <T extends Record> T load(Class<?> clazz, long id,
+            ConcurrentMap<Long, Record> existing, ConcourseProvider connections,
+            Binding binding, @Nullable Map<String, Set<Object>> data,
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
+        Concourse concourse = connections.request();
+        try {
+            return load(clazz, id, existing, connections, concourse, binding,
+                    data, null, targets);
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
+     * Apply {@code update} to the current value of {@code key} on
+     * {@code record} and return the validated replacement that a single-key
+     * atomic operation must write, or {@code null} when the produced value
+     * equals the current one and there is nothing to write.
+     *
+     * @param key the name of an intrinsic field
+     * @param record the {@link Record} that owns the field
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the replacement to write, or {@code null} when no write is needed
+     * @throws IllegalArgumentException if {@code key} is not
+     *             {@link #getAtomicableField(String, Record) eligible} for
+     *             single-key atomic operations, or if {@code update} returns
+     *             {@code null} or a value that is not an instance of the
+     *             field's type
+     * @throws IllegalStateException if the produced value violates the field's
+     *             constraints
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field
+     */
+    @Nullable
+    static <V> V resolveAtomicUpdate(String key, Record record,
+            UnaryOperator<V> update) {
+        Field field = getAtomicableField(key, record);
+        V current = getAtomicableFieldValue(field, record);
+        V next = update.apply(current);
+        Verify.thatArgument(next != null,
+                "The update operator cannot return null");
+        Verify.thatArgument(Primitives.wrap(field.getType()).isInstance(next),
+                "Cannot atomically operate on {} in {} because the"
+                        + " replacement is a {} and the field stores a {}",
+                key, record.__, next.getClass().getSimpleName(),
+                field.getType().getSimpleName());
+        record.checkIsSavable(field, key, next);
+        return Objects.equals(current, next) ? null : next;
+    }
+
+    /**
+     * Run {@code restore} unless {@code transaction} owns the state the restore
+     * would undo: it committed, or a failed save poisoned it while it remains
+     * open.
+     *
+     * @param restore the task that restores captured bindings, or {@code null}
+     *            when there is nothing to restore
+     * @param transaction the {@link TransactionInterface} whose outcome decides
+     *            whether the restore runs, or {@code null} when no transaction
+     *            was attempted
+     */
+    static void restoreUnlessTransactionOwns(@Nullable Runnable restore,
+            @Nullable TransactionInterface transaction) {
+        if(restore != null) {
+            boolean owns = false;
+            if(transaction instanceof DatabaseTransaction) {
+                DatabaseTransaction tx = (DatabaseTransaction) transaction;
+                owns = tx.committed() || (tx.open() && tx.poisoned());
+            }
+            if(!owns) {
+                restore.run();
+            }
+        }
+    }
+
+    /**
      * Serialize {@code value} by converting it to an object that can be stored
      * within the database. This method assumes that {@code value} is a scalar
      * (e.g. not a {@link Sequences#isSequence(Object)}).
@@ -315,6 +430,206 @@ public abstract class Record implements Comparable<Record> {
         }
         else {
             return Tag.create(new Gson().toJson(value));
+        }
+    }
+
+    /**
+     * Capture the binding of every loaded {@link Record} that is reachable from
+     * the {@code values} and is not bound to {@code owner}, and return a task
+     * that restores each captured binding.
+     *
+     * @param values the values whose reachable {@link Record Records} are
+     *            captured
+     * @param owner the {@link DatabaseInterface} whose {@link Record Records}
+     *            keep the bindings they hold, or {@code null} to capture every
+     *            reachable {@link Record}
+     * @return a task that restores every captured binding
+     */
+    static Runnable snapshotBindings(Object[] values,
+            @Nullable DatabaseInterface owner) {
+        Set<Record> graph = Sets.newIdentityHashSet();
+        Set<Record> seen = Sets.newIdentityHashSet();
+        for (Object value : values) {
+            forEachReachableRecord(value,
+                    record -> record.collectGraph(graph, seen));
+        }
+        List<Runnable> restores = Lists.newArrayListWithCapacity(graph.size());
+        for (Record record : graph) {
+            if(owner == null || record.binding != owner) {
+                Binding binding = record.binding;
+                ConcourseProvider connections = record.connections;
+                restores.add(() -> {
+                    record.binding = binding;
+                    record.connections = connections;
+                });
+            }
+        }
+        return () -> restores.forEach(Runnable::run);
+    }
+
+    /**
+     * Stage a single-key atomic update of {@code key} on {@code record} within
+     * {@code transaction} and return the {@code record}, or {@code null} when
+     * there is no record to update.
+     *
+     * @param transaction the {@link TransactionInterface} the update stages
+     *            within
+     * @param record the {@link Record} to update, or {@code null} when there is
+     *            nothing to update
+     * @param key the name of an intrinsic field
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@code record}, or {@code null} when {@code record}
+     *         is {@code null}
+     * @throws IllegalArgumentException if {@code key} is not
+     *             {@link #getAtomicableField(String, Record) eligible} for
+     *             single-key atomic operations, or if {@code update} returns
+     *             {@code null} or a value that is not an instance of the
+     *             field's type
+     * @throws IllegalStateException if the produced value violates the field's
+     *             constraints
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field
+     */
+    @Nullable
+    static <T extends Record, V> T stageAtomicUpdate(
+            TransactionInterface transaction, @Nullable T record, String key,
+            UnaryOperator<V> update) {
+        if(record == null) {
+            return null;
+        }
+        else {
+            V next = resolveAtomicUpdate(key, record, update);
+            if(next != null) {
+                record.set(key, next);
+                transaction.save(record);
+            }
+            return record;
+        }
+    }
+
+    /**
+     * Return a {@link BuildableState} that extends {@code criteria} with a
+     * conjoined equality clause for each non-null entry in {@code data}, or
+     * {@code criteria} itself when {@code data} adds nothing.
+     * <p>
+     * A {@link Sequences#isSequence(Object) sequence}-valued entry matches
+     * element-wise: its clause is satisfied by a record that stores any one of
+     * the elements.
+     * </p>
+     *
+     * @param criteria the {@link BuildableState} to extend, or {@code null} to
+     *            start from the first clause
+     * @param data the (key, value) pairs to conjoin
+     * @return the extended {@link BuildableState}, or {@code null} when
+     *         {@code criteria} is {@code null} and every entry is skipped
+     */
+    @Nullable
+    private static BuildableState conjoinEqualityClauses(
+            @Nullable BuildableState criteria, Map<String, Object> data) {
+        for (Entry<String, Object> entry : data.entrySet()) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+            if(value == null) {
+                continue; // A null value does not affect uniqueness.
+            }
+            else if(Sequences.isSequence(value)) {
+                AtomicReference<BuildableState> $sub = new AtomicReference<>(
+                        null);
+                Sequences.forEach(value, item -> {
+                    item = serializeScalarValue(item);
+                    if($sub.get() == null) {
+                        $sub.set(Criteria.where().key(key)
+                                .operator(Operator.EQUALS).value(item));
+                    }
+                    else {
+                        $sub.set($sub.get().or().key(key)
+                                .operator(Operator.EQUALS).value(item));
+                    }
+                });
+                if($sub.get() == null) {
+                    // An empty sequence stores no values, so it does not
+                    // affect uniqueness.
+                }
+                else if(criteria == null) {
+                    criteria = Criteria.where().group($sub.get());
+                }
+                else {
+                    criteria = Criteria.where()
+                            .group(criteria.and().group($sub.get()));
+                }
+            }
+            else {
+                value = serializeScalarValue(value);
+                criteria = criteria == null
+                        ? Criteria.where().key(key).operator(Operator.EQUALS)
+                                .value(value)
+                        : criteria.and().key(key).operator(Operator.EQUALS)
+                                .value(value);
+            }
+        }
+        return criteria;
+    }
+
+    /**
+     * Perform {@code action} on every loaded {@link Record} that is reachable
+     * from {@code value}: a {@link Record} directly, the loaded {@link Record}
+     * within a {@link DeferredReference}, or either one within a
+     * {@link Sequences#isSequence(Object) Sequence}.
+     *
+     * @param value the value to inspect for {@link Record} references
+     * @param action the action to perform on each reachable {@link Record}
+     */
+    private static void forEachReachableRecord(Object value,
+            Consumer<Record> action) {
+        if(Sequences.isSequence(value)) {
+            Sequences.forEach(value,
+                    item -> forEachReachableRecord(item, action));
+        }
+        else {
+            Record record = null;
+            if(value instanceof Record) {
+                record = (Record) value;
+            }
+            else if(value instanceof DeferredReference) {
+                record = ((DeferredReference<?>) value).$ref();
+            }
+
+            if(record != null) {
+                action.accept(record);
+            }
+        }
+    }
+
+    /**
+     * Perform {@code onAdd} on every element of {@code current} that
+     * {@code stored} does not hold and {@code onRemove} on every element of
+     * {@code stored} that {@code current} does not hold. A {@code stored} that
+     * is not a {@link Set} holds no element.
+     *
+     * @param current the elements the field holds now, in serialized form
+     * @param stored the elements the field held in the {@link #__baseline
+     *            baseline}
+     * @param onAdd the action for an introduced element
+     * @param onRemove the action for a dropped element
+     */
+    private static void forEachSequenceDelta(Set<?> current,
+            @Nullable Object stored, Consumer<Object> onAdd,
+            Consumer<Object> onRemove) {
+        Set<?> known = stored instanceof Set ? (Set<?>) stored
+                : ImmutableSet.of();
+        for (Object value : current) {
+            if(!known.contains(value)) {
+                onAdd.accept(value);
+            }
+        }
+        for (Object value : known) {
+            if(value != NULL_PLACEHOLDER && !current.contains(value)) {
+                onRemove.accept(value);
+            }
         }
     }
 
@@ -445,78 +760,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Add the canonical data representation of {@code value} to the
-     * {@code hasher}.
-     *
-     * @param hasher
-     * @param value
-     */
-    @SuppressWarnings("rawtypes")
-    private static void hashValue(Hasher hasher, @Nullable Object value) {
-        if(value != null) {
-            hasher.putString(value.getClass().getName(),
-                    StandardCharsets.UTF_8);
-            if(Sequences.isSequence(value)) {
-                Sequences.forEach(value, item -> hashValue(hasher, item));
-            }
-            else if(value instanceof Record) {
-                Record record = (Record) value;
-                hasher.putLong(record.id());
-            }
-            else if(value instanceof DeferredReference) {
-                DeferredReference deferred = (DeferredReference) value;
-                hasher.putLong(deferred.$id());
-            }
-            else if(value instanceof Tag || value instanceof String) {
-                hasher.putString(value.toString(), StandardCharsets.UTF_8);
-            }
-            else if(value instanceof Enum) {
-                hasher.putInt(((Enum) value).ordinal());
-            }
-            else if(value instanceof Boolean
-                    || value.getClass() == boolean.class) {
-                hasher.putBoolean((boolean) value);
-            }
-            else if(value instanceof Byte || value.getClass() == byte.class) {
-                hasher.putByte((byte) value);
-            }
-            else if(value instanceof Double
-                    || value.getClass() == double.class) {
-                hasher.putDouble((double) value);
-            }
-            else if(value instanceof Float || value.getClass() == float.class) {
-                hasher.putFloat((float) value);
-            }
-            else if(value instanceof Integer || value.getClass() == int.class) {
-                hasher.putInt((int) value);
-            }
-            else if(value instanceof Long || value.getClass() == long.class) {
-                hasher.putLong((long) value);
-            }
-            else if(value instanceof Short || value.getClass() == short.class) {
-                hasher.putShort((short) value);
-            }
-            else if(value instanceof Timestamp) {
-                Timestamp timestamp = (Timestamp) value;
-                hasher.putLong(timestamp.getMicros());
-            }
-            else if(value instanceof Serializable) {
-                byte[] bytes = ByteBuffers.toByteArray(
-                        Serializables.getBytes((Serializable) value));
-                hasher.putBytes(bytes);
-            }
-            else {
-                String json = new Gson().toJson(value);
-                hasher.putString(json, StandardCharsets.UTF_8);
-            }
-        }
-        else {
-            hasher.putInt(0);
-            hasher.putInt(0);
-        }
-    }
-
-    /**
      * Return {@code true} if the record identified by {@code id} is in a
      * "zombie" state meaning it exists in the database without any actual data.
      *
@@ -565,24 +808,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return {@code true} if {@code audit} contains any change recorded after
-     * {@code checkpointTs}
-     *
-     * @param audit a record-level audit history keyed by {@link Timestamp}
-     * @param checkpointTs the timestamp of the most recent checkpoint
-     * @return {@code true} if the data is stale
-     */
-    private static boolean isStaleAudit(Map<Timestamp, List<String>> audit,
-            long checkpointTs) {
-        for (Timestamp ts : audit.keySet()) {
-            if(ts.getMicros() > checkpointTs) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
      * INTERNAL method to load a {@link Record} from {@code clazz} identified by
      * {@code id}.
      *
@@ -590,9 +815,10 @@ public abstract class Record implements Comparable<Record> {
      * @param id the record ID
      * @param existing previously loaded {@link Record Records} used to break
      *            cycles
-     * @param connections the {@link ConnectionPool} to use
+     * @param connections the {@link ConcourseProvider} to use
      * @param concourse the active {@link Concourse} connection
-     * @param runway the owning {@link Runway} instance
+     * @param binding the {@link Binding} that scopes the {@link Record
+     *            Record's} operations
      * @param data pre-loaded data for this record, or {@code null} to fetch
      *            from the database
      * @param prefix a key prefix for navigation-style nested keys, or
@@ -604,13 +830,13 @@ public abstract class Record implements Comparable<Record> {
      */
     @SuppressWarnings("unchecked")
     private static <T extends Record> T load(Class<?> clazz, long id,
-            ConcurrentMap<Long, Record> existing, ConnectionPool connections,
-            Concourse concourse, Runway runway,
+            ConcurrentMap<Long, Record> existing, ConcourseProvider connections,
+            Concourse concourse, Binding binding,
             @Nullable Map<String, Set<Object>> data, String prefix,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         T record = (T) newDefaultInstance(clazz, connections);
         setInternalFieldValue("id", id, record);
-        record.assign(runway);
+        record.bind(binding, connections);
         record.load(concourse, existing, data, prefix, targets);
         record.onLoad();
         return record;
@@ -649,7 +875,7 @@ public abstract class Record implements Comparable<Record> {
      */
     @SuppressWarnings("unchecked")
     private static <T> T newDefaultInstance(Class<T> clazz,
-            ConnectionPool connections) {
+            ConcourseProvider connections) {
         try {
             // Use Unsafe to allocate the instance and reflectively set all the
             // default fields defined herewithin so there's no requirement for
@@ -662,12 +888,36 @@ public abstract class Record implements Comparable<Record> {
             setInternalFieldValue("id", NULL_ID, instance);
             setInternalFieldValue("inViolation", false, instance);
             setInternalFieldValue("connections", connections, instance);
-            setInternalFieldValue("db",
-                    new ReactiveDatabaseInterface((Record) instance), instance);
+            setInternalFieldValue("db", new ReactiveBinding((Record) instance),
+                    instance);
             return instance;
         }
         catch (InstantiationException e) {
             throw CheckedExceptions.throwAsRuntimeException(e);
+        }
+    }
+
+    /**
+     * Return {@code true} if a save that writes {@code writes} for a key takes
+     * away one of the {@code changes} that another writer made to that key.
+     *
+     * @param changes the changes another writer made to the key, or
+     *            {@code null} if the key is unchanged
+     * @param writes the values the save writes to the key, or {@code null} if
+     *            the save replaces every value stored for the key
+     * @return {@code true} if the save takes away a change
+     */
+    private static boolean overwrites(@Nullable Map<Diff, Set<Object>> changes,
+            @Nullable Set<Object> writes) {
+        if(changes == null) {
+            return false;
+        }
+        else if(writes == null) {
+            return true;
+        }
+        else {
+            return changes.values().stream().flatMap(Set::stream)
+                    .anyMatch(writes::contains);
         }
     }
 
@@ -681,27 +931,34 @@ public abstract class Record implements Comparable<Record> {
      * @param saver the {@link Saver} for the attempt's transaction
      * @param context the active {@link SaveContext}
      */
-    @SuppressWarnings("rawtypes")
     private static void saveModifiedReferenceWithinTransaction(Object value,
             Saver saver, SaveContext context) {
-        if(Sequences.isSequence(value)) {
-            Sequences.forEach(value,
-                    item -> saveModifiedReferenceWithinTransaction(item, saver,
-                            context));
-        }
-        else {
-            Record record = null;
-            if(value instanceof Record) {
-                record = (Record) value;
-            }
-            else if(value instanceof DeferredReference) {
-                DeferredReference deferred = (DeferredReference) value;
-                record = deferred.$ref();
-            }
-
-            if(record != null && !context.contains(record)) {
+        forEachReachableRecord(value, record -> {
+            if(!context.contains(record)) {
                 record.saveWithinTransaction(saver, context);
             }
+        });
+    }
+
+    /**
+     * Return the values a {@link Record} last saw stored for a key, as the set
+     * that a read of the key returns when nothing changed.
+     *
+     * @param baseline the serialized state the {@link Record} last saw for the
+     *            key, or {@code null} if it saw none
+     * @return the seen values
+     */
+    private static Set<?> seenValues(@Nullable Object baseline) {
+        if(baseline == null) {
+            return ImmutableSet.of();
+        }
+        else if(baseline instanceof Set) {
+            return ((Set<?>) baseline).stream()
+                    .filter(value -> value != NULL_PLACEHOLDER)
+                    .collect(Collectors.toSet());
+        }
+        else {
+            return ImmutableSet.of(baseline);
         }
     }
 
@@ -776,6 +1033,37 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return the values that a save writes for a field that holds
+     * {@code current} and held {@code stored} in the {@link #__baseline
+     * baseline}, or {@code null} when the save replaces every value stored for
+     * the field.
+     * <p>
+     * A sequence field writes only the elements it introduced and the elements
+     * it dropped. Every other field writes over whatever is stored.
+     * </p>
+     *
+     * @param current the field's value now, in serialized form
+     * @param stored the field's value in the {@link #__baseline baseline}
+     * @return the values that would be written, or {@code null} for every value
+     */
+    @Nullable
+    private static Set<Object> stagedValues(@Nullable Object current,
+            @Nullable Object stored) {
+        boolean sequence = current instanceof Set
+                || (current == null && stored instanceof Set);
+        if(sequence) {
+            Set<?> elements = current instanceof Set ? (Set<?>) current
+                    : ImmutableSet.of();
+            Set<Object> values = Sets.newLinkedHashSet();
+            forEachSequenceDelta(elements, stored, values::add, values::add);
+            return values;
+        }
+        else {
+            return null;
+        }
+    }
+
+    /**
      * Return {@code value} converted to its database representation:
      * {@link Record Records} become {@link Link Links}, and collections of
      * {@link Record Records} become collections of {@link Link Links}. Scalar
@@ -804,15 +1092,9 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * A globally pinned {@link Runway} instance that is automatically assigned
-     * to newly created {@link Record} instances when no explicit assignment is
-     * made.
-     * <p>
-     * This field allows for automatic {@link Runway} assignment in single
-     * instance scenarios, eliminating the need for explicit assignment in most
-     * applications.
-     * </p>
+     * to a newly created {@link Record} when no explicit assignment is made.
      */
-    static Runway PINNED_RUNWAY_INSTANCE = null;
+    static volatile Runway PINNED_RUNWAY_INSTANCE = null;
 
     /**
      * The key used to hold the {@link #_realms} metadata.
@@ -835,7 +1117,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * The key that references a records id in Concourse.
      */
-    /* package */ static final String IDENTIFIER_KEY = "$id$";
+    static final String IDENTIFIER_KEY = "$id$";
 
     /**
      * The prefix applied to a key provided to the
@@ -875,6 +1157,13 @@ public abstract class Record implements Comparable<Record> {
     private static long NULL_ID = -1;
 
     /**
+     * A placeholder that stands in for a {@code null} sequence element within a
+     * {@link #__baseline baseline}, since {@code null} cannot be serialized for
+     * storage but its presence in memory must still be observable as a change.
+     */
+    private static final Object NULL_PLACEHOLDER = new Object();
+
+    /**
      * A sentinel id used to indicate that a record is its own author.
      * <p>
      * Since Concourse does not allow records to link to themselves, this
@@ -886,6 +1175,11 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      */
     private static final long SELF_AUTHOR_SENTINEL_ID = -2;
+
+    /**
+     * The source of {@link Snapshot#sequence} stamps.
+     */
+    private static final AtomicLong SNAPSHOT_SEQUENCE = new AtomicLong();
 
     /**
      * The coefficient multiplied by the result of a comparison to push the
@@ -914,9 +1208,11 @@ public abstract class Record implements Comparable<Record> {
     /**
      * The {@link DatabaseInterface} that can be used to make queries within the
      * database from which this {@link Record} is sourced.
+     * <p>
+     * Every operation resolves against the current {@link #binding}.
+     * </p>
      */
-    protected final transient DatabaseInterface db = new ReactiveDatabaseInterface(
-            this);
+    protected final transient DatabaseInterface db = new ReactiveBinding(this);
 
     /**
      * A log of any suppressed errors related to this Record. A concatenation of
@@ -930,12 +1226,6 @@ public abstract class Record implements Comparable<Record> {
      * this record is stored.
      */
     private transient String __ = getClass().getName();
-
-    /**
-     * An internal flag that tracks whether {@link #_realms} have been
-     * {@link #addRealm(String) added} or {@link #removeRealm(String) removed}.
-     */
-    private transient boolean _hasModifiedRealms = false;
 
     /**
      * The list of realms to which this Record belongs.
@@ -957,9 +1247,10 @@ public abstract class Record implements Comparable<Record> {
     private transient Set<String> _realms = ImmutableSet.of();
 
     /**
-     * The {@link Concourse} database in which this {@link Record} is stored.
+     * The {@link ConcourseProvider} that supplies the connection for each of
+     * this {@link Record Record's} database operations.
      */
-    private transient ConnectionPool connections = null;
+    private transient ConcourseProvider connections = null;
 
     /**
      * A flag that indicates if the record has been deleted using the
@@ -985,10 +1276,16 @@ public abstract class Record implements Comparable<Record> {
     private transient boolean inViolation = false;
 
     /**
-     * The {@link Runway} instance that has been {@link #assign(Runway)
-     * assigned} to this {@link Record}.
+     * The {@link Binding} that this {@link Record} is bound to: the
+     * {@link Runway} instance to which it is {@link #assign(Runway) assigned},
+     * or the {@link Transaction} it joined.
+     * <p>
+     * This field holds the scope itself and changes as the {@link Record} is
+     * re-bound; {@link #db} is the stable handle that delegates to this field
+     * at call time.
+     * </p>
      */
-    private transient Runway runway = null;
+    private transient Binding binding = null;
 
     /**
      * A cache of the {@link #$computed() properties}.
@@ -1007,22 +1304,55 @@ public abstract class Record implements Comparable<Record> {
     private transient Map<String, Object> _computeOnceCache;
 
     /**
-     * This {@link Record Record's} checksum as of the most recent time it was
-     * loaded or persisted.
+     * The per-key serialized state of this {@link Record} as of the most recent
+     * time it was loaded from or persisted to the database, or {@code null} if
+     * this {@link Record} has never been synchronized with the database.
      * <p>
-     * This value is <strong>NOT</strong> returned from {@link #checksum()}, but
-     * is instead compared against the value returned from that method to
-     * determine if this {@link Record} has any {@link #hasUnsavedChanges()
-     * unsaved} changes.
+     * A {@link #save() save} stages only the difference between the current
+     * state and this baseline, so concurrent changes to keys this instance
+     * never modified are preserved. Each entry maps a key to its serialized
+     * scalar value or, for a sequence, to the {@link Set} of its serialized
+     * elements.
+     * </p>
+     * <p>
+     * The map is replaced wholesale on every update and its contents are never
+     * mutated in place, so a {@link Snapshot} can capture and
+     * {@link #restore(Snapshot) restore} it by reference.
      * </p>
      */
-    private String __checksum = null;
+    @Nullable
+    private transient Map<String, Object> __baseline = null;
 
     /**
-     * The timestamp (in microseconds) when this {@link Record} was last loaded
-     * from or successfully saved to the database.
+     * The {@link #binding} through which this {@link Record} was last loaded
+     * from or successfully saved to the database. If neither has happened, the
+     * value is {@code null}. Construction reads nothing, so a newly built
+     * {@link Record} has none until its first load or successful save.
+     */
+    @Nullable
+    private transient Binding checkpointBinding = null;
+
+    /**
+     * The timestamp (in microseconds) of the newest state that this
+     * {@link Record} accounts for, so a staleness check inspects only what
+     * followed it. Construction establishes it. A load or a successful save
+     * advances it. An instance that a load creates holds {@code 0} until that
+     * load populates it.
      */
     private transient long checkpointTs = 0;
+
+    /**
+     * The names of the fields that {@link #verifyOnSave(String...)
+     * verifyOnSave} declared for the next save, or {@code null} if none are
+     * declared.
+     * <p>
+     * The set is replaced wholesale on every update and its contents are never
+     * mutated in place, so a {@link Snapshot} can capture it by reference and a
+     * {@link #restore(Snapshot) restore} can declare its keys again.
+     * </p>
+     */
+    @Nullable
+    private transient Set<String> verifyKeys = null;
 
     /**
      * Cached copy of audit data used by some {@link Metadata} operations.
@@ -1058,9 +1388,11 @@ public abstract class Record implements Comparable<Record> {
         this.id = Time.now();
         if(PINNED_RUNWAY_INSTANCE != null) {
             this.connections = PINNED_RUNWAY_INSTANCE.connections;
-            this.runway = PINNED_RUNWAY_INSTANCE;
+            this.binding = PINNED_RUNWAY_INSTANCE;
         }
-        checkpoint();
+        // NOTE: Construction bounds the staleness window but reads nothing,
+        // so it establishes a checkpoint timestamp and no checkpoint binding.
+        checkpointTs = Time.now();
     }
 
     /**
@@ -1074,11 +1406,11 @@ public abstract class Record implements Comparable<Record> {
         if(_realms.isEmpty()) {
             _realms = Sets.newLinkedHashSet();
         }
-        return _realms.add(realm) && (_hasModifiedRealms = true);
+        return _realms.add(realm);
     }
 
     /**
-     * Assign this {@link Record} to a the specified {@code runway} instance.
+     * Assign this {@link Record} to the specified {@code runway} instance.
      * <p>
      * Each {@link Record} must know the {@link Runway} instance in which it is
      * stored. Explicit assignment via this method is only required if there are
@@ -1089,10 +1421,20 @@ public abstract class Record implements Comparable<Record> {
      *
      * @param runway the {@link Runway} instance where this {@link Record} is
      *            stored.
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction}, which must end before the record can
+     *             move to another scope
      */
     public void assign(Runway runway) {
-        this.runway = runway;
-        this.connections = runway.connections;
+        if(binding == runway || !isBoundToOpenTransaction()) {
+            this.binding = runway;
+            this.connections = runway.connections;
+        }
+        else {
+            throw new TransactionBoundaryException(
+                    "Cannot assign " + __ + " to a different scope because"
+                            + " it is bound to an open Transaction");
+        }
     }
 
     /**
@@ -1155,6 +1497,9 @@ public abstract class Record implements Comparable<Record> {
                 }
             }
         }
+        // Capture the provider so the release pairs with the request, even
+        // if user code that runs within the operation rebinds this Record.
+        ConcourseProvider connections = this.connections;
         Concourse concourse = connections.request();
         try {
             Map<Long, DeferredReference<Record>> authors = new HashMap<>();
@@ -1184,7 +1529,7 @@ public abstract class Record implements Comparable<Record> {
                     else {
                         author = authors.computeIfAbsent(target,
                                 $ -> new DeferredReference<Record>(target,
-                                        runway));
+                                        binding()));
                     }
                 }
                 else {
@@ -1332,6 +1677,16 @@ public abstract class Record implements Comparable<Record> {
      * {@link Record} that is staged for deletion is refused.
      * </p>
      * <p>
+     * The exchange resolves against this {@link Record Record's} binding. When
+     * bound to a {@link Runway}, a successful swap is durable when this method
+     * returns. When bound to an open {@link Transaction}, the expected value is
+     * compared against what that {@link Transaction} observes, and a
+     * {@code true} answer holds only if that {@link Transaction} commits. A
+     * conflict with a concurrent writer throws
+     * {@link com.cinchapi.concourse.TransactionException TransactionException}
+     * or fails the commit.
+     * </p>
+     * <p>
      * Only an intrinsic, single-value field whose type is a Java primitive or
      * its boxed form, a {@link String}, a {@link Timestamp}, an enum, or a
      * {@link Tag} is eligible. Transient and {@link Unique} fields are not
@@ -1345,8 +1700,9 @@ public abstract class Record implements Comparable<Record> {
      * <p>
      * <strong>NOTE:</strong> This is a targeted write, not a {@link #save()
      * save}: the {@link #beforeSave() beforeSave} hook and any save listeners
-     * do not run. The write does count as a modification for stale-write
-     * detection, so a later {@link #save(boolean) save(preventStaleWrite)} may
+     * do not run. The write does count as an external modification of
+     * {@code key} for another instance, so a later {@link #save(boolean)
+     * save(preventStaleWrite)} that writes {@code key} from that instance may
      * require a {@link #refresh() refresh} first.
      * </p>
      *
@@ -1365,8 +1721,10 @@ public abstract class Record implements Comparable<Record> {
      *             field named by {@code key}
      */
     public final <T> boolean exchange(String key, T replacement) {
-        Verify.that(runway != null, "Cannot perform an atomic exchange"
-                + " because this Record isn't pinned to a Runway instance");
+        Verify.that(harness() != null,
+                "Cannot atomically exchange {} in {} because this Record is"
+                        + " not pinned to a Runway instance",
+                key, __);
         Verify.that(!deleted,
                 "Cannot atomically exchange {} in {} because this Record is"
                         + " staged for deletion",
@@ -1380,15 +1738,34 @@ public abstract class Record implements Comparable<Record> {
                         + " replacement is a {} and the field stores a {}",
                 key, __, replacement.getClass().getSimpleName(),
                 field.getType().getSimpleName());
-        checkIsSavable(field, key, replacement);
-        Object expected = getAtomicableFieldValue(field, this);
+        boolean transactional = isBoundToOpenTransaction();
+        // Capture the provider so the release pairs with the request, even
+        // if user code that runs within the operation rebinds this Record.
+        ConcourseProvider connections = this.connections;
         Concourse concourse = connections.request();
         try {
-            boolean clean = !hasUnsavedChanges();
+            // The validation runs within the operation window so that a
+            // ValidatedBy validator cannot end the enclosing Transaction and
+            // leave the write to resolve against the enclosing Runway.
+            checkIsSavable(field, key, replacement);
+            Object expected = getAtomicableFieldValue(field, this);
             boolean swapped;
-            if(expected == null) {
-                swapped = setIfAbsent(concourse, key,
-                        serializeScalarValue(replacement));
+            if(expected == null && transactional) {
+                // The enclosing Transaction makes the check-then-set atomic
+                // and its reads join the conflict footprint, so this path
+                // does not stage the nested transaction that
+                // Runway.setIfAbsent uses.
+                if(Runway.canSetIfAbsent(concourse, key, id)) {
+                    concourse.set(key, serializeScalarValue(replacement), id);
+                    swapped = true;
+                }
+                else {
+                    swapped = false;
+                }
+            }
+            else if(expected == null) {
+                swapped = Runway.setIfAbsent(concourse, key,
+                        serializeScalarValue(replacement), id);
             }
             else {
                 swapped = concourse.verifyAndSwap(key,
@@ -1396,7 +1773,14 @@ public abstract class Record implements Comparable<Record> {
                         serializeScalarValue(replacement));
             }
             if(swapped) {
-                applyValueChange(key, replacement, clean);
+                if(transactional) {
+                    // The mirror of a staged swap is not a user edit, so a
+                    // Transaction that ends without a commit must not leave
+                    // the mirror behind as an unsaved change.
+                    ((DatabaseTransaction) binding).recordAtomicValue(this, key,
+                            replacement);
+                }
+                applyValueChange(key, replacement);
                 return true;
             }
             else {
@@ -1417,6 +1801,9 @@ public abstract class Record implements Comparable<Record> {
      *
      * @param key the key name or navigation key
      * @return the resolved value, or {@code null} if no readable value is found
+     * @throws ReferenceNotFoundException if the value holds a stale reference
+     *             and the governing policy is
+     *             {@link ReferenceNotFoundPolicy#ERROR ERROR}
      */
     public <T> T get(String key) {
         return get(key, Record::isReadableField);
@@ -1445,14 +1832,26 @@ public abstract class Record implements Comparable<Record> {
      * <p>
      * The {@code update} function receives the current value for {@code key},
      * or {@code null} when the field has no value, and returns the value that
-     * should take its place. When this method returns, the produced value is
-     * durably stored and this {@link Record Record's} in-memory value for
+     * should take its place.
+     * </p>
+     * <p>
+     * The update resolves against this {@link Record Record's} binding. When
+     * bound to a {@link Runway}, the produced value is durably stored when this
+     * method returns and this {@link Record Record's} in-memory value for
      * {@code key} matches it. If the update cannot be committed within the
-     * bounds of the {@link AtomicRetryPolicy} configured on the {@link Runway}
-     * instance this {@link Record} is pinned to, a
-     * {@link RetryExhaustedException} is thrown and nothing is written; this
-     * {@link Record Record's} in-memory value for {@code key} may reflect a
-     * value that a concurrent writer stored.
+     * bounds of the {@link AtomicRetryPolicy} configured on that
+     * {@link Runway}, a {@link RetryExhaustedException} is thrown and nothing
+     * is written; this {@link Record Record's} in-memory value for {@code key}
+     * may reflect a value that a concurrent writer stored.
+     * </p>
+     * <p>
+     * When bound to an open {@link Transaction}, the update rests on the value
+     * that transaction observes rather than on this {@link Record Record's}
+     * in-memory value, and that value joins the transaction's conflict
+     * footprint. The produced value becomes durable only when the transaction's
+     * owner commits. A conflict with a concurrent writer throws
+     * {@link com.cinchapi.concourse.TransactionException TransactionException}
+     * or fails the commit.
      * </p>
      * <p>
      * The {@code update} function may be applied more than once, so it must be
@@ -1475,8 +1874,12 @@ public abstract class Record implements Comparable<Record> {
      *            current one; it must not return {@code null}
      * @return the value that was current immediately before the update took
      *         effect, or {@code null} if the field had no value
-     * @throws RetryExhaustedException if the update cannot be committed within
-     *             the bounds of the governing {@link AtomicRetryPolicy}
+     * @throws DeletedRecordException if, when bound to an open
+     *             {@link Transaction}, this {@link Record} holds no data in the
+     *             database
+     * @throws RetryExhaustedException if, when bound to a {@link Runway}, the
+     *             update cannot be committed within the bounds of the governing
+     *             {@link AtomicRetryPolicy}
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations, or {@code update} returns {@code null}
      * @throws IllegalStateException if this {@link Record} is not pinned to a
@@ -1514,6 +1917,59 @@ public abstract class Record implements Comparable<Record> {
     public boolean inSameRealm(Record record) {
         return _realms.isEmpty() && record._realms.isEmpty()
                 || !Sets.intersection(_realms, record._realms).isEmpty();
+    }
+
+    /**
+     * Return the unique {@link Record} that agrees with every {@link Unique}
+     * constraint of this record, or save this record when none exists.
+     * <p>
+     * The identity is the current data under this record's {@link Unique}
+     * constraints, each scoped by its declaration: a {@link Unique#any()
+     * hierarchy-scoped} constraint applies across the class that declares it
+     * and every descendant, and a class-scoped constraint applies among records
+     * of this record's concrete class. Another record shares the identity only
+     * if it agrees with every constraint and has the same concrete class; a
+     * {@code null} value does not participate. If no record shares the
+     * identity, then this record itself is saved and returned. If an existing
+     * record shares some but not all of the identity, or claims it from another
+     * class, then there is no match, and the save fails {@link Unique}
+     * enforcement.
+     * </p>
+     * <p>
+     * The operation runs in this record's transactional scope: if this record
+     * is bound to an open {@link Transaction}, then the lookup and the save
+     * stage within it; otherwise, the lookup and the save commit as one
+     * transaction, under the contract of {@link Runway#intern(Record) intern}
+     * on the bound {@link Runway}.
+     * </p>
+     * <p>
+     * No access checks apply. This method canonicalizes the record itself, so
+     * no audience mediates the operation, even when this record is an
+     * {@link com.cinchapi.runway.access.Audience Audience}. The
+     * audience-mediated form is
+     * {@link com.cinchapi.runway.access.Audience#intern(Record)
+     * Audience#intern}, which enforces the audience's permissions and
+     * visibility on whatever record it interns, including the audience itself.
+     * </p>
+     *
+     * @param <T> the type of {@link Record}
+     * @return the {@link Record} that claims the identity: the sole existing
+     *         match, or this record once saved
+     * @throws DuplicateEntryException if more than one record shares the
+     *             identity
+     * @throws IllegalArgumentException if no field under a {@link Unique}
+     *             constraint has a non-null value
+     * @throws UnsupportedOperationException if this {@link Record} has no
+     *             binding
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} that another thread owns or that a failed
+     *             save poisoned
+     * @throws RetryExhaustedException if a new transaction cannot commit within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     */
+    @SuppressWarnings("unchecked")
+    public final <T extends Record> T intern() {
+        return $supply(tx -> tx.intern((T) this));
     }
 
     /**
@@ -1863,19 +2319,21 @@ public abstract class Record implements Comparable<Record> {
      * any in-memory values with the latest persisted data.
      * <p>
      * After refreshing, this {@link Record} is considered in sync with the
-     * database &mdash; {@link #hasStaleDataWithinTransaction(Concourse)
-     * hasStaleDataWithinTransaction} will return {@code false} until the next
-     * external modification occurs. The {@link #computeOnce(String, Supplier)
-     * computeOnce} cache is also invalidated so that memoized computed values
-     * recompute against the refreshed state on next access.
+     * database, so a {@link #save(boolean) save(preventStaleWrite)} is not
+     * rejected until the next external modification occurs. The
+     * {@link #computeOnce(String, Supplier) computeOnce} cache is also
+     * invalidated so that memoized computed values recompute against the
+     * refreshed state on next access.
      * </p>
      *
-     * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance
+     * @throws IllegalStateException if this {@link Record} has no binding
      */
     public final void refresh() {
-        Verify.that(runway != null, "Cannot refresh because this Record isn't"
-                + " pinned to a Runway instance");
+        Verify.that(binding != null,
+                "Cannot refresh because this Record has no binding");
+        // Capture the provider so the release pairs with the request, even
+        // if user code that runs within the operation rebinds this Record.
+        ConcourseProvider connections = this.connections;
         Concourse concourse = connections.request();
         try {
             ConcurrentMap<Long, Record> existing = new ConcurrentHashMap<>();
@@ -1898,7 +2356,7 @@ public abstract class Record implements Comparable<Record> {
      */
     public boolean removeRealm(String realm) {
         try {
-            return _realms.remove(realm) && (_hasModifiedRealms = true);
+            return _realms.remove(realm);
         }
         finally {
             if(_realms.isEmpty()) {
@@ -1945,8 +2403,31 @@ public abstract class Record implements Comparable<Record> {
      * <strong>NOTE:</strong> This method recursively saves any linked
      * {@link Record records}.
      * </p>
-     * 
-     * @return {@code true} if this {@link Record} is successfully saved
+     * <p>
+     * The save resolves against this {@link Record Record's} binding: when
+     * bound to a {@link Runway}, the changes are durable when this method
+     * returns; when bound to a {@link Transaction}, the changes stage within it
+     * and become durable when the transaction commits.
+     * </p>
+     * <p>
+     * A save refuses data it cannot accept and reports the refusal through this
+     * {@link Record}: bound to a {@link Runway} it returns {@code false} and
+     * holds the reason for {@link #throwSupressedExceptions()}; bound to a
+     * {@link Transaction} it throws {@link SuppressedRunwayException}, because
+     * what it staged cannot be selectively undone. A {@link Runway} bound save
+     * also reports a commit conflict through {@code false}; every other failure
+     * propagates as itself.
+     * </p>
+     *
+     * @return {@code true} if this {@link Record} is successfully saved, or
+     *         {@code false} when a {@link Runway} bound save refuses the data
+     * @throws DeletedRecordException if a {@link Record} that the save writes
+     *             holds no data in the database
+     * @throws StaleDataException if another writer changed a value that
+     *             {@link #verifyOnSave(String...) verifyOnSave} declared
+     * @throws SuppressedRunwayException if a {@link Transaction} bound save
+     *             refuses the data
+     * @throws IllegalStateException if this {@link Record} has no binding
      */
     public final boolean save() {
         return save(false);
@@ -1958,20 +2439,63 @@ public abstract class Record implements Comparable<Record> {
      * <strong>NOTE:</strong> This method recursively saves any linked
      * {@link Record Records}.
      * </p>
+     * <p>
+     * The save resolves against this {@link Record Record's} binding: when
+     * bound to a {@link Runway}, the changes are durable when this method
+     * returns; when bound to a {@link Transaction}, the changes stage within it
+     * and become durable when the transaction commits.
+     * </p>
+     * <p>
+     * <strong>NOTE:</strong> A save also verifies every value that
+     * {@link #verifyOnSave(String...) verifyOnSave} declared, whether or not
+     * {@code preventStaleWrite} is {@code true}.
+     * </p>
      *
-     * @param preventStaleWrite if {@code true}, reject the save when this
-     *            {@link Record} (or any linked {@link Record}) has been
-     *            externally modified since it was last loaded or saved
-     * @return {@code true} if this {@link Record} is successfully saved
+     * <p>
+     * When {@code preventStaleWrite} is {@code true}, the save fails if it
+     * would overwrite a value that another writer changed. This {@link Record}
+     * and every linked {@link Record} the save reaches are judged only on the
+     * values each would write, so a {@link Record} that would write nothing can
+     * never fail the save. The cleanup that a deletion requires is never
+     * judged: a companion that a {@link CascadeDelete} or {@link JoinDelete}
+     * schedules, and the removal of a {@link CaptureDelete} link to a deleted
+     * {@link Record}, both apply whatever another writer did.
+     * </p>
+     * <p>
+     * <strong>NOTE:</strong> This covers writes, not reads. A caller that reads
+     * one value to decide another, or that wants the guarantee enforced
+     * structurally, should use a {@link Transaction} instead, which conflicts
+     * on what it reads as well.
+     * </p>
+     *
+     * <p>
+     * A save refuses data it cannot accept and reports the refusal through this
+     * {@link Record}: bound to a {@link Runway} it returns {@code false} and
+     * holds the reason for {@link #throwSupressedExceptions()}; bound to a
+     * {@link Transaction} it throws {@link SuppressedRunwayException}, because
+     * what it staged cannot be selectively undone. A {@link Runway} bound save
+     * also reports a commit conflict through {@code false}; every other failure
+     * propagates as itself.
+     * </p>
+     *
+     * @param preventStaleWrite if {@code true}, reject the save if it would
+     *            overwrite a value that another writer changed
+     * @return {@code true} if this {@link Record} is successfully saved, or
+     *         {@code false} when a {@link Runway} bound save refuses the data
+     * @throws DeletedRecordException if a {@link Record} that the save writes
+     *             holds no data in the database
      * @throws StaleDataException if {@code preventStaleWrite} is {@code true}
-     *             and stale data is detected
-     * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance
+     *             and the save would overwrite a value that another writer
+     *             changed, or if another writer changed a value that
+     *             {@link #verifyOnSave(String...) verifyOnSave} declared
+     * @throws SuppressedRunwayException if a {@link Transaction} bound save
+     *             refuses the data
+     * @throws IllegalStateException if this {@link Record} has no binding
      */
     public final boolean save(boolean preventStaleWrite) {
-        Verify.that(runway != null, "Cannot perform an implicit save because"
-                + " this Record isn't pinned to a Runway instance");
-        return runway.save(preventStaleWrite, this);
+        Verify.that(binding != null, "Cannot perform an implicit save because"
+                + " this Record has no binding");
+        return binding.save(preventStaleWrite, this);
     }
 
     /**
@@ -2018,8 +2542,8 @@ public abstract class Record implements Comparable<Record> {
      * <p>
      * The write is unconditional and takes effect on the next {@link #save()
      * save}. Use {@link #exchange(String, Object) exchange} to instead write
-     * through to the database immediately, and only if this {@link Record
-     * Record's} view of {@code key} is still current.
+     * through this {@link Record Record's} binding immediately, and only if
+     * this {@link Record Record's} view of {@code key} is still current.
      * </p>
      *
      * @param key the key name
@@ -2080,6 +2604,90 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Execute {@code work} within this {@link Record Record's} transactional
+     * scope.
+     * <p>
+     * This method behaves exactly like {@link #transactAndSupply(Function)} for
+     * work that does not produce a result. The work may therefore run more than
+     * once, so it must be free of side effects outside of the transaction.
+     * </p>
+     *
+     * @param work the work to run
+     * @throws UnsupportedOperationException if this {@link Record} has no
+     *             binding
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} that another thread owns or that a failed
+     *             save poisoned
+     * @throws RetryExhaustedException if a new transaction cannot commit within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     */
+    public final void transact(Consumer<TransactionInterface> work) {
+        transactAndSupply(transaction -> {
+            work.accept(transaction);
+            return null;
+        });
+    }
+
+    /**
+     * Execute {@code work} within this {@link Record Record's} transactional
+     * scope and return its result.
+     * <p>
+     * If this {@link Record} is bound to an open {@link Transaction}, then the
+     * work joins it. Everything the work stages becomes durable when that
+     * transaction's owner commits it.
+     * </p>
+     * <p>
+     * Otherwise, the work runs in a new managed transaction, the same as
+     * {@link Runway#transactAndSupply(Function)}. This {@link Record} joins
+     * each attempt's transaction, so a direct {@link #save() save} stages
+     * within it. A conflict retries the work within the bounds of the governing
+     * {@link AtomicRetryPolicy}.
+     * </p>
+     * <p>
+     * Either way, the work cannot commit, abort or close the transaction it
+     * joins.
+     * </p>
+     * <p>
+     * <strong>NOTE:</strong> The work may run more than once, so it must be
+     * free of side effects outside of the transaction. This {@link Record
+     * Record's} in-memory state is outside of it, so an edit from a discarded
+     * attempt survives into the next one. Set each value absolutely, or derive
+     * it from a read through the transaction. Do not increment what a prior
+     * attempt left behind.
+     * </p>
+     * <p>
+     * If this {@link Record} is a {@link Transactional} (e.g., an
+     * {@link com.cinchapi.runway.access.Audience Audience}), then the work
+     * receives this {@link Transactional Transactional's}
+     * {@link Transactional#scope(TransactionInterface) scoped view} of the
+     * transaction.
+     * </p>
+     *
+     * @param work the work to run
+     * @return the result of {@code work}
+     * @throws UnsupportedOperationException if this {@link Record} has no
+     *             binding
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} that another thread owns or that a failed
+     *             save poisoned
+     * @throws RetryExhaustedException if a new transaction cannot commit within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     */
+    public final <T> T transactAndSupply(
+            Function<TransactionInterface, T> work) {
+        Function<TransactionInterface, T> scoped;
+        if(this instanceof Transactional) {
+            Transactional transactional = (Transactional) this;
+            scoped = transaction -> work
+                    .apply(transactional.scope(transaction));
+        }
+        else {
+            scoped = work;
+        }
+        return $supply(scoped);
+    }
+
+    /**
      * Atomically apply {@code update} to the value of {@code key} and return
      * the value that the update produced.
      * <p>
@@ -2093,8 +2701,12 @@ public abstract class Record implements Comparable<Record> {
      *            current one; it must not return {@code null}
      * @return the value that is current immediately after the update takes
      *         effect
-     * @throws RetryExhaustedException if the update cannot be committed within
-     *             the bounds of the governing {@link AtomicRetryPolicy}
+     * @throws DeletedRecordException if, when bound to an open
+     *             {@link Transaction}, this {@link Record} holds no data in the
+     *             database
+     * @throws RetryExhaustedException if, when bound to a {@link Runway}, the
+     *             update cannot be committed within the bounds of the governing
+     *             {@link AtomicRetryPolicy}
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations, or {@code update} returns {@code null}
      * @throws IllegalStateException if this {@link Record} is not pinned to a
@@ -2106,6 +2718,60 @@ public abstract class Record implements Comparable<Record> {
      */
     public final <T> T updateAndGet(String key, UnaryOperator<T> update) {
         return updateAtomically(key, update).after();
+    }
+
+    /**
+     * Declare that the next save must verify that the database still stores,
+     * for each of the {@code keys}, what this {@link Record} last saw, and
+     * reject the save with a {@link StaleDataException} when it does not. A
+     * value stored alongside the ones this {@link Record} saw is a difference,
+     * so it fails the save.
+     * <p>
+     * The verification applies whether or not the save prevents stale writes,
+     * and it covers the fields of this {@link Record} only. A caller whose
+     * decision depends on a value that another {@link Record} holds uses a
+     * {@link Transaction}, whose reads join its conflict footprint.
+     * </p>
+     * <p>
+     * The save that carries a declared key ends that key's declaration when it
+     * commits, and no later save carries it. A key that no save carried stays
+     * declared, and a save that does not commit leaves its keys declared, so a
+     * caller that retries keeps the verification. A {@link Record} that the
+     * database does not yet hold last saw nothing for each declared key, so a
+     * value that another writer stores for one of them fails the save.
+     * </p>
+     * <p>
+     * Within an open {@link Transaction}, a {@link Record} that the
+     * {@link Transaction} loaded needs no declaration, because the
+     * {@link Transaction} fails its own commit when a writer changes anything
+     * it read. A declaration on such a {@link Record} costs nothing. Any other
+     * {@link Record} carries its declaration into the save, and a writer that
+     * moves a declared value fails that save or the commit. A save throws an
+     * {@link IllegalStateException} when it carries a declaration on a
+     * {@link Record} that was last loaded or saved outside the
+     * {@link Transaction} after it began, which the {@link Transaction} cannot
+     * see.
+     * </p>
+     *
+     * @param keys the names of the intrinsic fields to verify
+     * @throws IllegalArgumentException if any of the {@code keys} does not name
+     *             an intrinsic field of this {@link Record}, or names one that
+     *             is transient
+     */
+    public final void verifyOnSave(String... keys) {
+        for (String key : keys) {
+            Field field = StaticAnalysis.instance().getField(this, key);
+            Verify.thatArgument(field != null,
+                    "{} is not an intrinsic field of {}", key, __);
+            Verify.thatArgument(!Modifier.isTransient(field.getModifiers()),
+                    "Cannot verify {} in {} because it is transient and never"
+                            + " stored",
+                    key, __);
+        }
+        Set<String> declared = verifyKeys == null ? Sets.newLinkedHashSet()
+                : Sets.newLinkedHashSet(verifyKeys);
+        declared.addAll(Arrays.asList(keys));
+        verifyKeys = declared;
     }
 
     /**
@@ -2123,9 +2789,9 @@ public abstract class Record implements Comparable<Record> {
      * </ul>
      * </p>
      * <p>
-     * Any changes made to the record's fields within this method will be
-     * included in the save operation. This method is called within the same
-     * transaction as the save operation, ensuring atomicity.
+     * Any changes made to the record's fields or realm membership within this
+     * method will be included in the save operation. This method is called
+     * within the same transaction as the save operation, ensuring atomicity.
      * </p>
      * <p>
      * <strong>Note:</strong> This method should not throw exceptions unless the
@@ -2138,6 +2804,12 @@ public abstract class Record implements Comparable<Record> {
      * &mdash; for example, a {@link Unique} or stale-data conflict &mdash; or
      * that is retried after a spurious failure. Implementations must therefore
      * be idempotent and free of external side effects.
+     * </p>
+     * <p>
+     * <strong>Note:</strong> A {@link Record} that this hook introduces into a
+     * persistent field joins the active save: it must pass the same
+     * transaction-boundary check as every other record, and within a
+     * {@link Transaction} it is bound to the transaction.
      * </p>
      */
     protected void beforeSave() {}
@@ -2309,16 +2981,43 @@ public abstract class Record implements Comparable<Record> {
      * Apply the in-memory effects of a committed save that deleted the
      * {@link Record Records} with {@code ids}: remove every reference that one
      * of this {@link Record Record's} {@link CaptureDelete} fields holds to a
-     * deleted record and re-align this {@link Record Record's} unsaved-changes
-     * status with its current state.
+     * deleted record and mark those removals as saved, without disturbing the
+     * unsaved status of any other change.
      *
      * @param ids the ids of {@link Record Records} the save deleted
      */
     void applyCaptureDeleteCleanup(Set<Long> ids) {
-        if(removeCaptureDeleteReferences(ids)) {
+        Set<Field> touched = removeCaptureDeleteReferences(ids);
+        if(!touched.isEmpty()) {
             clearComputeOnceCache();
             _audit = null;
-            __checksum = checksum();
+            if(__baseline != null) {
+                Set<Object> removed = Sets
+                        .newHashSetWithExpectedSize(ids.size());
+                for (long id : ids) {
+                    removed.add(Link.to(id));
+                }
+                Map<String, Object> baseline = Maps.newHashMap(__baseline);
+                for (Field field : touched) {
+                    String key = field.getName();
+                    Object stored = baseline.get(key);
+                    if(stored instanceof Set) {
+                        Set<Object> remaining = Sets
+                                .newLinkedHashSet((Set<?>) stored);
+                        remaining.removeAll(removed);
+                        if(remaining.isEmpty()) {
+                            baseline.remove(key);
+                        }
+                        else {
+                            baseline.put(key, remaining);
+                        }
+                    }
+                    else if(removed.contains(stored)) {
+                        baseline.remove(key);
+                    }
+                }
+                __baseline = baseline;
+            }
         }
     }
 
@@ -2328,17 +3027,67 @@ public abstract class Record implements Comparable<Record> {
      *
      * @param key the name of the field that was written
      * @param replacement the value that now holds in the database
-     * @param clean {@code true} if this {@link Record} had no unsaved changes
-     *            when the write began, in which case it reports none after this
-     *            method returns
      */
-    void applyValueChange(String key, Object replacement, boolean clean) {
+    void applyValueChange(String key, Object replacement) {
         Reflection.set(key, replacement, this);
         clearComputeOnceCache();
         _audit = null;
-        if(clean) {
-            __checksum = checksum();
+        updateBaseline(key, replacement);
+    }
+
+    /**
+     * Bind this {@link Record} to {@code binding} so that every operation,
+     * including each {@link #save() save}, is scoped to it.
+     *
+     * @param binding the {@link Binding} to bind
+     * @param connections the {@link ConcourseProvider} that supplies
+     *            connections within the scope of the binding
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} other than {@code binding}
+     */
+    void bind(Binding binding, ConcourseProvider connections) {
+        verifyCanBind(binding);
+        this.binding = binding;
+        this.connections = connections;
+    }
+
+    /**
+     * {@link #bind(Binding, ConcourseProvider) Bind} this {@link Record}, and
+     * every loaded {@link Record} that is reachable from its persistent
+     * (non-transient) fields, to {@code binding}.
+     * <p>
+     * A {@link DeferredReference} that was never {@link DeferredReference#get()
+     * accessed} holds no loaded {@link Record} to bind; when it is accessed, it
+     * resolves through its owner's binding at that moment.
+     * </p>
+     *
+     * @param binding the {@link Binding} to bind
+     * @param connections the {@link ConcourseProvider} that supplies
+     *            connections within the scope of the binding
+     * @param seen the identity set of {@link Record Records} that are already
+     *            bound
+     */
+    void bindGraph(Binding binding, ConcourseProvider connections,
+            Set<Record> seen) {
+        Set<Record> graph = Sets.newIdentityHashSet();
+        collectGraph(graph, seen);
+        for (Record record : graph) {
+            record.verifyCanBind(binding);
         }
+        for (Record record : graph) {
+            record.bind(binding, connections);
+            seen.add(record);
+        }
+    }
+
+    /**
+     * Return {@link #db} under its {@link Binding} type, so the caller can also
+     * save and {@link Binding#load(long) load} through it.
+     *
+     * @return {@link #db} as a {@link Binding}
+     */
+    Binding binding() {
+        return (Binding) db;
     }
 
     /**
@@ -2382,47 +3131,61 @@ public abstract class Record implements Comparable<Record> {
      */
     final void checkpoint() {
         checkpointTs = Time.now();
+        checkpointBinding = binding;
     }
 
     /**
-     * Return {@code true} if this {@link Record Record's} data in the database
-     * has been modified since this {@link Record} was last loaded or saved.
+     * Return {@code true} if another writer changed any value of this
+     * {@link Record} after it was last loaded or saved. If this {@link Record}
+     * was never synchronized, return {@code false}.
      *
      * @param concourse the {@link Concourse} connection to use
-     * @return {@code true} if the data is stale
+     * @return {@code true} if any value changed externally
      */
-    boolean hasStaleDataWithinTransaction(Concourse concourse) {
-        if(checkpointTs == 0) {
-            return false;
-        }
-        else {
-            return isStaleAudit(concourse.audit(id), checkpointTs);
-        }
+    boolean hasExternalModifications(Concourse concourse) {
+        return checkpointTs != 0 && !concourse
+                .diff(id, Timestamp.fromMicros(checkpointTs)).isEmpty();
     }
 
     /**
      * Return {@code true} if this {@link Record} has any unsaved changes.
+     * <p>
+     * A change is a difference between a field's current value and the value it
+     * held when this {@link Record} was last loaded or persisted. A mutation
+     * with no serialized effect (e.g., reordering a {@link List}, whose order
+     * the database does not store) is not a change. Realm membership changes do
+     * not affect this result.
+     * </p>
      *
      * @return {@code true} if there are changes that need to be saved.
      */
     boolean hasUnsavedChanges() {
-        if(__checksum == null) {
+        if(__baseline == null) {
             return true;
         }
         else {
-            return !__checksum.equals(checksum());
+            for (Field field : fields()) {
+                if(!Modifier.isTransient(field.getModifiers())) {
+                    Object current = serializeFieldValue(field);
+                    Object stored = __baseline.get(field.getName());
+                    if(!Objects.equals(current, stored)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
     }
 
     /**
-     * Return {@code true} if this record is in a "zombie" state meaning it
-     * exists in the database without any actual data.
+     * Return {@code true} if this {@link Record} is bound to an open
+     * {@link Transaction}.
      *
-     * @param concourse
-     * @return {@code true} if this record is a zombie
+     * @return {@code true} if the binding is an open {@link Transaction}
      */
-    final boolean inZombieState(Concourse concourse) {
-        return inZombieState(id, concourse, null);
+    boolean isBoundToOpenTransaction() {
+        return binding instanceof DatabaseTransaction
+                && ((DatabaseTransaction) binding).open();
     }
 
     /**
@@ -2474,7 +3237,7 @@ public abstract class Record implements Comparable<Record> {
         existing.put(id, this); // add the current object so we don't
                                 // recurse infinitely
         if(data == null) {
-            Set<String> paths = runway
+            Set<String> paths = harness()
                     .getPathsForClassIfSupported(this.getClass());
             // @formatter:off
             data = paths != null
@@ -2483,7 +3246,7 @@ public abstract class Record implements Comparable<Record> {
             // @formatter:on
         }
         if(prefix == null
-                || !runway.properties().supportsPreSelectLinkedRecords()) {
+                || !harness().properties().supportsPreSelectLinkedRecords()) {
             prefix = "";
         }
         checkConstraints(concourse, data, prefix);
@@ -2521,11 +3284,6 @@ public abstract class Record implements Comparable<Record> {
                             if(converted != null) {
                                 collector.add(converted);
                             }
-                            else {
-                                // TODO: should we remove the object from
-                                // Concourse since it results in a #null
-                                // value?
-                            }
                         });
                         if(type.isArray()) {
                             // NOTE: ArrayBuilder cannot build an empty
@@ -2556,21 +3314,10 @@ public abstract class Record implements Comparable<Record> {
                                     data.getOrDefault(prepend + IDENTIFIER_KEY,
                                             ImmutableSet.of()),
                                     null);
-                            if(id != null) {
-                                String $type = (String) Iterables.getFirst(
-                                        data.getOrDefault(prepend + SECTION_KEY,
-                                                ImmutableSet.of()),
-                                        null);
-                                if($type != null) {
-                                    type = Reflection.getClassCasted($type);
-                                }
-                                value = existing.get(id);
-                                value = value == null
-                                        ? load(type, id, existing, connections,
-                                                concourse, runway, data,
-                                                prepend, targets)
-                                        : value;
-                            }
+                            value = id != null
+                                    ? dereferenceLink(key, id, data, prepend,
+                                            existing, concourse, targets)
+                                    : value;
                         }
                         else if(first != null) {
                             value = convert(key, type, first, concourse,
@@ -2596,7 +3343,7 @@ public abstract class Record implements Comparable<Record> {
                 throw CheckedExceptions.throwAsRuntimeException(e);
             }
         }
-        __checksum = checksum();
+        __baseline = captureBaseline();
         checkpoint();
     }
 
@@ -2649,16 +3396,33 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Declare again the {@code keys} that a save carried and did not commit,
+     * alongside any key that {@link #verifyOnSave(String...) verifyOnSave}
+     * declared since.
+     *
+     * @param keys the keys to declare again, or {@code null} for none
+     */
+    void redeclareVerifyKeys(@Nullable Set<String> keys) {
+        if(keys != null) {
+            Set<String> declared = verifyKeys == null ? Sets.newLinkedHashSet()
+                    : Sets.newLinkedHashSet(verifyKeys);
+            declared.addAll(keys);
+            verifyKeys = declared;
+        }
+    }
+
+    /**
      * Remove every reference held by one of this {@link Record Record's}
      * {@link CaptureDelete} fields to a {@link Record} whose id is in
      * {@code ids}.
      *
      * @param ids the ids of {@link Record Records} deleted within the active
      *            save
-     * @return {@code true} if at least one reference was removed
+     * @return the {@link Field Fields} from which at least one reference was
+     *         removed; empty if nothing was removed
      */
-    boolean removeCaptureDeleteReferences(Set<Long> ids) {
-        boolean changed = false;
+    Set<Field> removeCaptureDeleteReferences(Set<Long> ids) {
+        Set<Field> touched = Sets.newLinkedHashSet();
         Set<Field> fields = StaticAnalysis.instance().getAnnotatedFields(this,
                 CaptureDelete.class);
         for (Field field : fields) {
@@ -2682,7 +3446,7 @@ public abstract class Record implements Comparable<Record> {
                             }
                         }
                         field.set(this, replacement);
-                        changed = true;
+                        touched.add(field);
                     }
                 }
                 else if(value.getClass().isArray()) {
@@ -2704,19 +3468,47 @@ public abstract class Record implements Comparable<Record> {
                             field.set(this, java.lang.reflect.Array
                                     .newInstance(component, 0));
                         }
-                        changed = true;
+                        touched.add(field);
                     }
                 }
                 else if(isDeletedReference(value, ids)) {
                     field.set(this, null);
-                    changed = true;
+                    touched.add(field);
                 }
             }
             catch (ReflectiveOperationException e) {
                 throw CheckedExceptions.wrapAsRuntimeException(e);
             }
         }
-        return changed;
+        return touched;
+    }
+
+    /**
+     * Load the {@link Record} that the {@link DeferredReference} on the field
+     * named {@code key} points at. If the reference is stale, that field's
+     * {@link ReferenceNotFoundPolicy} decides whether the access answers
+     * {@code null} or fails.
+     *
+     * @param key the name of the housing field
+     * @param target the id of the referenced {@link Record}
+     * @return the referenced {@link Record}, or {@code null} if the reference
+     *         is stale and the governing policy allows that
+     * @throws ReferenceNotFoundException if the reference is stale and the
+     *             governing policy is {@link ReferenceNotFoundPolicy#ERROR
+     *             ERROR}
+     */
+    <T extends Record> T resolveDeferredReference(String key, long target) {
+        T record = binding.load(target);
+        if(record == null) {
+            Concourse concourse = connections.request();
+            try {
+                applyReferenceNotFoundPolicy(key, target, concourse);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        return record;
     }
 
     /**
@@ -2726,10 +3518,14 @@ public abstract class Record implements Comparable<Record> {
      * @param snapshot the {@link Snapshot} to restore
      */
     void restore(Snapshot snapshot) {
-        _hasModifiedRealms = snapshot.hasModifiedRealms;
-        __checksum = snapshot.checksum;
+        __baseline = snapshot.baseline;
         _author = snapshot.author;
         deleted = snapshot.deleted;
+        redeclareVerifyKeys(snapshot.verifyKeys);
+        // The discarded attempt may have cached audit history that includes
+        // its own staged revisions, so the next metadata read must re-fetch
+        // from the durable state.
+        _audit = null;
     }
 
     /**
@@ -2739,49 +3535,87 @@ public abstract class Record implements Comparable<Record> {
      *
      * @param saver the {@link Saver} for the attempt's transaction
      * @param context the active {@link SaveContext}
+     * @throws DeletedRecordException if a {@link Record} that the save writes
+     *             holds no data in the database
      * @throws StaleDataException if the {@code context}
      *             {@link SaveContext#shouldPreventStaleWrite() prevents} stale
-     *             writes and this {@link Record} has stale data
+     *             writes and a value that this save writes changed in the
+     *             database since this {@link Record} last loaded or saved it,
+     *             or if a value that {@link #verifyOnSave(String...)
+     *             verifyOnSave} declared changed in that window
      * @throws IllegalStateException if a {@link Required} or
      *             {@link ValidatedBy} field constraint is violated
      * @throws ConstraintViolationException if a {@link Unique} field constraint
      *             is violated
      */
     void saveWithinTransaction(Saver saver, SaveContext context) {
+        context.admit(this);
         context.snapshot(this);
         Preconditions.checkState(!inViolation);
-        if(context.shouldPreventStaleWrite() && checkpointTs != 0) {
-            saver.audit(id, audit -> {
-                if(isStaleAudit(audit, checkpointTs)) {
-                    throw new StaleDataException(id);
-                }
-            });
-        }
         errors.clear();
         context.add(this);
         if(!deleted && context.isDeleted(id)) {
-            // NOTE: A deletion is final within a save, so an id-equal
-            // instance processed after the save deleted its record adopts
-            // the deletion instead of staging data that the deletion
+            // NOTE: A deletion is final within a save and across the saves
+            // of a transaction, so an id-equal instance processed after the
+            // deletion adopts it instead of staging data that the deletion
             // erases. The adoption keeps the instance's deleted state
             // aligned with the notification it receives.
             deleted = true;
         }
-        if(_hasModifiedRealms) {
-            saver.reconcile(REALMS_KEY, id, _realms);
-            _hasModifiedRealms = false;
+        boolean changed = !deleted && hasUnsavedChanges();
+        if(changed) {
+            // NOTE: The hook may add fields to what the save writes, so it runs
+            // before the write set is computed.
+            beforeSave();
         }
-        if(_author != null) {
+        if(!deleted && __baseline != null
+                && (changed || storableAuthor() != null || hasRealmChanges())) {
+            // NOTE: A save writes only what changed, so a save of a Record
+            // whose data another writer erased would restore what it writes
+            // and leave a record that no writer intended to exist. A Record
+            // without a baseline has never been persisted, and a save that
+            // writes nothing restores nothing, so neither needs the check.
+            // The condition names every write this method stages into this
+            // Record: its fields, its author attribution and its realm
+            // membership. A new one belongs here too.
+            // This precedes the stale-write check so the more specific
+            // refusal reaches the caller when both apply to this Record.
+            saver.select(ImmutableSet.of(SECTION_KEY), id, stored -> {
+                if(stored.getOrDefault(SECTION_KEY, ImmutableSet.of())
+                        .isEmpty()) {
+                    throw new DeletedRecordException(id);
+                }
+                else {
+                    // The Record still exists, so the save may proceed.
+                }
+            });
+        }
+        if(checkpointTs != 0
+                && (context.shouldPreventStaleWrite() || verifyKeys != null)) {
+            // NOTE: This runs before anything is staged because a synchronous
+            // Saver reads at the recording call, and the read must observe the
+            // state that preceded this save's own writes.
+            stageStaleWriteCheck(saver, changed,
+                    context.shouldPreventStaleWrite());
+            // NOTE: The check that just staged is the verification the
+            // declaration asked for, so the declaration ends here rather than
+            // at the commit. A save that does not commit restores the
+            // Snapshot that this attempt captured, which puts the declaration
+            // back for the retry.
+            verifyKeys = null;
+        }
+        Record author = storableAuthor();
+        if(author != null) {
             // Check for self-authorship: if this record is its own author,
             // use the sentinel ID to avoid self-referential links in Concourse
-            long authorId = _author.id == this.id ? SELF_AUTHOR_SENTINEL_ID
-                    : _author.id;
+            long authorId = author.id == this.id ? SELF_AUTHOR_SENTINEL_ID
+                    : author.id;
             saver.set(AUTHOR_KEY, Link.to(authorId), id);
-            _author = null;
         }
         else {
             saver.clear(AUTHOR_KEY, id);
         }
+        _author = null;
         if(deleted) {
             deleteWithinTransaction(saver, context);
             // Deleting this Record may schedule companion deletions (e.g.,
@@ -2793,18 +3627,24 @@ public abstract class Record implements Comparable<Record> {
                 companion.deleteWithinTransaction(saver, context);
             }
         }
-        else if(!hasUnsavedChanges()) {
+        else if(!changed) {
+            stageRealmsDelta(saver);
             // This Record hasn't been modified, so simply go through each
-            // field and try to save any outgoing Record references that contain
-            // modifications.
+            // persistent field and try to save any outgoing Record references
+            // that contain modifications. A transient field is outside the
+            // Record's persistent data, so a reference it holds does not save
+            // with the Record.
             for (Field field : fields()) {
-                Object value = getFieldValue(field, this);
-                saveModifiedReferenceWithinTransaction(value, saver, context);
+                if(!Modifier.isTransient(field.getModifiers())) {
+                    Object value = getFieldValue(field, this);
+                    saveModifiedReferenceWithinTransaction(value, saver,
+                            context);
+                }
             }
         }
         else {
             context.markChanged(this);
-            beforeSave();
+            stageRealmsDelta(saver);
             saver.verifyOrSet(SECTION_KEY, __, id);
             Set<String> alreadyVerifiedUniqueConstraints = Sets.newHashSet();
             for (Field field : fields()) {
@@ -2813,6 +3653,10 @@ public abstract class Record implements Comparable<Record> {
                     Object value = getFieldValue(field, this);
                     boolean isSequence = Sequences.isSequence(value);
                     checkIsSavable(field, key, value);
+                    MergeStrategy directive = field
+                            .getAnnotation(MergeStrategy.class);
+                    boolean overwrite = directive != null && directive
+                            .value() == MergeStrategy.Strategy.OVERWRITE;
                     if(value != null) {
                         // Enforce that Unique fields have non-duplicated
                         // values across the class
@@ -2829,19 +3673,29 @@ public abstract class Record implements Comparable<Record> {
                         }
                         value = transform(value, saver, context);
                         if(value.getClass().isArray()) {
-                            saver.reconcile(key, id, (Object[]) value);
+                            if(overwrite) {
+                                saver.reconcile(key, id, (Object[]) value);
+                            }
+                            else {
+                                stageSequenceDelta(saver, key,
+                                        (Object[]) value);
+                            }
                         }
-                        else {
+                        else if(overwrite
+                                || !Objects.equals(value, baseline(key))) {
                             saver.verifyOrSet(key, value, id);
                         }
                     }
-                    else {
+                    else if(overwrite) {
                         saver.clear(key, id);
+                    }
+                    else {
+                        stageValueRemoval(saver, key);
                     }
                 }
             }
             _audit = null;
-            __checksum = checksum();
+            __baseline = captureBaseline();
         }
     }
 
@@ -2852,6 +3706,115 @@ public abstract class Record implements Comparable<Record> {
      */
     Snapshot snapshot() {
         return new Snapshot();
+    }
+
+    /**
+     * Return a {@link UniqueIdentity} for each of this {@link Record Record's}
+     * participating {@link Unique} constraints, resolved against its current
+     * data.
+     * <p>
+     * Each unnamed {@link Unique} field forms its own constraint, and each
+     * named constraint spans all of the fields that share the name. A
+     * {@code null} value does not participate, consistent with {@link Unique}
+     * enforcement, so a constraint whose every value is {@code null} is
+     * omitted. Each {@link UniqueIdentity UniqueIdentity's} {@link Criteria}
+     * does not constrain the record's class; its scope is carried separately.
+     * </p>
+     *
+     * @return a {@link UniqueIdentity} for each participating constraint
+     * @throws IllegalArgumentException if no field under a {@link Unique}
+     *             constraint has a non-null value, or if the fields of a named
+     *             constraint disagree on {@link Unique#any() any}, or if
+     *             hierarchy-scoped members are declared by different classes
+     */
+    List<UniqueIdentity> uniqueIdentities() {
+        List<Collection<Field>> constraints = Lists.newArrayList();
+        Map<String, Collection<Field>> named = Maps.newLinkedHashMap();
+        for (Field field : fields()) {
+            Unique constraint = field.getAnnotation(Unique.class);
+            if(constraint != null
+                    && !Modifier.isTransient(field.getModifiers())) {
+                String name = constraint.name();
+                Collection<Field> members;
+                if(name.length() == 0) {
+                    members = Lists.newArrayList();
+                    constraints.add(members);
+                }
+                else {
+                    members = named.computeIfAbsent(name, $name -> {
+                        Collection<Field> $members = Lists.newArrayList();
+                        constraints.add($members);
+                        return $members;
+                    });
+                }
+                members.add(field);
+            }
+            else {
+                // The field is not part of the Record's persistent unique
+                // identity.
+            }
+        }
+        List<UniqueIdentity> identities = Lists.newArrayList();
+        for (Collection<Field> members : constraints) {
+            Field first = Iterables.getFirst(members, null);
+            Unique constraint = first.getAnnotation(Unique.class);
+            String name = constraint.name();
+            Class<? extends Record> window = uniqueConstraintWindow(
+                    name.length() == 0 ? first.getName() : name, members);
+            Map<String, Object> data = Maps.newLinkedHashMap();
+            for (Field member : members) {
+                data.put(member.getName(), getFieldValue(member, this));
+            }
+            BuildableState criteria = conjoinEqualityClauses(null, data);
+            if(criteria != null) {
+                identities.add(new UniqueIdentity(constraint.any(), window,
+                        criteria.build()));
+            }
+        }
+        Verify.thatArgument(!identities.isEmpty(),
+                "{} has no non-null value under a Unique constraint", __);
+        return identities;
+    }
+
+    /**
+     * Record in the {@link #__baseline baseline} that the database now stores
+     * {@code value} (or, when {@code value} is {@code null}, nothing) for
+     * {@code key}, without affecting any other key. A no-op when this
+     * {@link Record} has never been synchronized with the database.
+     *
+     * @param key the key whose stored state changed
+     * @param value the scalar value the database now stores, in its
+     *            unserialized form; may be {@code null}
+     */
+    void updateBaseline(String key, @Nullable Object value) {
+        if(__baseline != null) {
+            Map<String, Object> baseline = Maps.newHashMap(__baseline);
+            if(value != null) {
+                baseline.put(key, serializeScalarValue(value));
+            }
+            else {
+                baseline.remove(key);
+            }
+            __baseline = baseline;
+        }
+    }
+
+    /**
+     * Verify that a save of this {@link Record} through {@code scope} does not
+     * cross the boundary of an open {@link Transaction}: the save must resolve
+     * against the transaction this {@link Record} is bound to, or this
+     * {@link Record} must not be bound to an open transaction at all.
+     *
+     * @param scope the {@link Binding} that the save resolves against
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} other than {@code scope}
+     */
+    void verifySavableThrough(Binding scope) {
+        if(binding != scope && isBoundToOpenTransaction()) {
+            throw new TransactionBoundaryException(
+                    "Cannot save " + __ + " through a different scope because"
+                            + " it is bound to an open Transaction");
+        }
     }
 
     /**
@@ -2955,6 +3918,109 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Execute {@code work} within this {@link Record Record's} transactional
+     * scope, against the raw transaction view: the work does not receive the
+     * {@link Transactional#scope(TransactionInterface) scoped view} that
+     * {@link #transactAndSupply(Function)} applies when this {@link Record} is
+     * a {@link Transactional}.
+     *
+     * @param work the work to run
+     * @return the result of {@code work}
+     * @throws UnsupportedOperationException if this {@link Record} has no
+     *             binding
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} that another thread owns or that a failed
+     *             save poisoned
+     * @throws RetryExhaustedException if a new transaction cannot commit within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     */
+    private <T> T $supply(Function<TransactionInterface, T> work) {
+        if(isBoundToOpenTransaction()) {
+            DatabaseTransaction transaction = (DatabaseTransaction) binding;
+            return transaction.execute(() -> work.apply(transaction));
+        }
+        else {
+            Runway runway = harness();
+            if(runway != null) {
+                return runway.transactAndSupply(transaction -> {
+                    // The lambda receives the Transaction that supply
+                    // constructs, so the cast to reach the package-private
+                    // join is safe.
+                    ((DatabaseTransaction) transaction).join(this);
+                    return work.apply(transaction);
+                });
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "Cannot execute transactional work because this"
+                                + " Record has no binding");
+            }
+        }
+    }
+
+    /**
+     * Apply the {@link ReferenceNotFoundPolicy} for the field named {@code key}
+     * to a stale reference to {@code target}.
+     *
+     * @param key the name of the housing field
+     * @param target the id of the record with no stored data
+     * @param concourse the connection through which a repair writes
+     * @throws ReferenceNotFoundException if the governing policy is
+     *             {@link ReferenceNotFoundPolicy#ERROR ERROR}
+     */
+    private void applyReferenceNotFoundPolicy(String key, long target,
+            Concourse concourse) {
+        ReferenceNotFoundPolicy policy = referenceNotFoundPolicy(key);
+        if(policy == ReferenceNotFoundPolicy.ERROR) {
+            throw new ReferenceNotFoundException(this, key, target);
+        }
+        else if(policy == ReferenceNotFoundPolicy.REPAIR) {
+            concourse.remove(key, Link.to(target), id);
+        }
+        else {
+            // SKIP leaves the stale reference in the database.
+        }
+    }
+
+    /**
+     * Return the {@link #__baseline baseline} state for {@code key}, or
+     * {@code null} if no value for {@code key} was present the last time this
+     * {@link Record} was synchronized with the database.
+     *
+     * @param key the key whose baseline state is requested
+     * @return the serialized scalar value, the {@link Set} of serialized
+     *         sequence elements, or {@code null}
+     */
+    @Nullable
+    private Object baseline(String key) {
+        return __baseline != null ? __baseline.get(key) : null;
+    }
+
+    /**
+     * Capture the {@link #__baseline baseline} that describes this
+     * {@link Record Record's} current state: the serialized value of every
+     * non-transient field and the current realm membership. Keys with no value
+     * have no entry.
+     *
+     * @return the captured baseline
+     */
+    private Map<String, Object> captureBaseline() {
+        Map<String, Object> baseline = Maps.newHashMap();
+        for (Field field : fields()) {
+            if(!Modifier.isTransient(field.getModifiers())) {
+                Object value = serializeFieldValue(field);
+                if(value != null) {
+                    baseline.put(field.getName(), value);
+                }
+            }
+        }
+        if(!_realms.isEmpty()) {
+            baseline.put(REALMS_KEY, ImmutableSet.copyOf(_realms));
+        }
+        return baseline;
+    }
+
+    /**
      * Check to ensure that this Record does not violate any constraints. If so,
      * throw an {@link IllegalStateException}.
      *
@@ -3018,12 +4084,14 @@ public abstract class Record implements Comparable<Record> {
         String name = constraint.name();
         String errorName = name.length() == 0 ? key : name;
         if(name.length() == 0) {
-            enqueueUniquenessCheck(saver, AnyMaps.create(key, value),
-                    errorName);
+            enqueueUniquenessCheck(saver, AnyMaps.create(key, value), errorName,
+                    constraint.any(),
+                    uniqueConstraintWindow(errorName, ImmutableList.of(field)));
         }
         else if(!alreadyVerifiedUniqueConstraints.contains(name)) {
             // Find all the fields that have this constraint and
             // check for uniqueness.
+            List<Field> members = Lists.newArrayList(field);
             Map<String, Object> values = Maps.newHashMap();
             values.put(key, value);
             fields().stream().filter($field -> $field != field)
@@ -3031,31 +4099,33 @@ public abstract class Record implements Comparable<Record> {
                     .filter($field -> $field.getAnnotation(Unique.class).name()
                             .equals(name))
                     .forEach($field -> {
+                        members.add($field);
                         values.put($field.getName(),
                                 Reflection.get($field.getName(), this));
                     });
-            enqueueUniquenessCheck(saver, values, errorName);
+            enqueueUniquenessCheck(saver, values, errorName, constraint.any(),
+                    uniqueConstraintWindow(name, members));
             alreadyVerifiedUniqueConstraints.add(name);
         }
     }
 
     /**
-     * Return a checksum for this {@link Record} based on its current state.
+     * Collect this {@link Record}, and every loaded {@link Record} reachable
+     * from its persistent (non-transient) fields, in {@code graph}, skipping
+     * any {@link Record} in {@code seen} and the graph behind it.
      *
-     * @return the checksum
+     * @param graph the identity set that receives the graph
+     * @param seen the identity set of {@link Record Records} that are already
+     *            bound
      */
-    private final String checksum() {
-        Hasher hasher = Hashing.murmur3_128().newHasher();
-        Set<Field> fields = fields().stream()
-                .sorted((f1, f2) -> f1.getName().compareTo(f2.getName()))
-                .filter(field -> !Modifier.isTransient(field.getModifiers()))
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-        for (Field field : fields) {
-            Object value = getFieldValue(field, this);
-            hasher.putString(field.getName(), StandardCharsets.UTF_8);
-            hashValue(hasher, value);
+    private void collectGraph(Set<Record> graph, Set<Record> seen) {
+        if(!seen.contains(this) && graph.add(this)) {
+            fields().stream().filter(
+                    field -> !Modifier.isTransient(field.getModifiers()))
+                    .map(field -> Reflection.get(field.getName(), this))
+                    .forEach(value -> forEachReachableRecord(value,
+                            record -> record.collectGraph(graph, seen)));
         }
-        return hasher.hash().toString();
     }
 
     /**
@@ -3127,15 +4197,16 @@ public abstract class Record implements Comparable<Record> {
      * Convert the {@code stored} value for {@code key} into the appropriate
      * Java object based on the field {@code type}.
      * <p>
-     * As ad-hoc cleanup, a dangling {@link Link} (one whose target
-     * {@link Record} no longer exists) is removed from {@code key} on
-     * {@code this} {@link Record} and {@code null} is returned.
+     * A dangling {@link Link} (one whose target {@link Record} no longer
+     * exists) resolves under the {@link ReferenceNotFoundPolicy} for
+     * {@code key}, so it may convert to {@code null}.
      *
      * @param key the Concourse field name on {@code this} {@link Record} where
      *            {@code stored} is held; must be the canonical field name
      *            (e.g., {@code "pebbles"}), not a navigation path (e.g.,
-     *            {@code "stone.pebbles"}), so that dangling-link cleanup writes
-     *            against a valid Concourse key
+     *            {@code "stone.pebbles"}), so that a
+     *            {@link ReferenceNotFoundPolicy#REPAIR repair} writes against a
+     *            valid Concourse key
      * @param type
      * @param stored
      * @param concourse
@@ -3155,7 +4226,8 @@ public abstract class Record implements Comparable<Record> {
             converted = alreadyLoaded.get(target);
             if(converted == null) {
                 if(type == DeferredReference.class) {
-                    converted = new DeferredReference(target, runway);
+                    converted = new DeferredReference(target, binding(), this,
+                            key);
                 }
                 else {
                     Map<String, Set<Object>> data = null;
@@ -3165,20 +4237,8 @@ public abstract class Record implements Comparable<Record> {
                     if(data == null) {
                         data = concourse.select(target);
                     }
-                    Set<Object> sections = data.getOrDefault(SECTION_KEY,
-                            ImmutableSet.of());
-                    String section = (String) Iterables.getLast(sections, null);
-                    if(Empty.ness().describes(section)) {
-                        concourse.remove(key, stored, id); // do some ad-hoc
-                                                           // cleanup
-                    }
-                    else {
-                        Class<? extends Record> targetClass = Reflection
-                                .getClassCasted(section);
-                        converted = load(targetClass, target, alreadyLoaded,
-                                connections, concourse, runway, data, null,
-                                targets);
-                    }
+                    converted = dereferenceLink(key, target, data, "",
+                            alreadyLoaded, concourse, targets);
                 }
             }
         }
@@ -3268,6 +4328,13 @@ public abstract class Record implements Comparable<Record> {
      * @param context the active {@link SaveContext}
      */
     private void deleteWithinTransaction(Saver saver, SaveContext context) {
+        // NOTE: A delete notification reports the state that the record
+        // stored, so the read must precede every write this deletion stages
+        if(context.shouldCaptureDeletionData(getClass())) {
+            saver.observe(StaticAnalysis.instance().getKeys(getClass()), id,
+                    data -> context.recordDeletionData(id, data));
+        }
+        context.admit(this);
         // Mark the deletion up front so this instance speaks for its id,
         // even when it enters the delete path directly as a companion
         // (e.g., @CascadeDelete or @JoinDelete) rather than through
@@ -3322,7 +4389,7 @@ public abstract class Record implements Comparable<Record> {
                                 .getLast(entry.getValue());
                         Class<? extends Record> clazz = Reflection
                                 .getClassCasted(__);
-                        Record record = db.load(clazz, id);
+                        Record record = loadUsingSaverContext(saver, clazz, id);
                         ensureDeletion(record, context);
                     }
                 }
@@ -3350,9 +4417,9 @@ public abstract class Record implements Comparable<Record> {
                                 .getLast(entry.getValue());
                         Class<? extends Record> clazz = Reflection
                                 .getClassCasted(__);
-                        Record record = db.load(clazz, id);
-                        if(record.removeCaptureDeleteReferences(
-                                ImmutableSet.of(this.id))) {
+                        Record record = loadUsingSaverContext(saver, clazz, id);
+                        if(!record.removeCaptureDeleteReferences(
+                                ImmutableSet.of(this.id)).isEmpty()) {
                             record.saveWithinTransaction(saver, context);
                         }
                         else {
@@ -3364,11 +4431,6 @@ public abstract class Record implements Comparable<Record> {
                 }
             });
         }
-
-        // Perform the deletion; companions scheduled above are processed
-        // when the #saveWithinTransaction that initiated the deletion
-        // drains the context's queue.
-        saver.clear(id);
     }
 
     /**
@@ -3394,12 +4456,62 @@ public abstract class Record implements Comparable<Record> {
                     || typeArgs.contains(Object.class)) {
                 value = Sequences.stream(value)
                         .map(item -> dereference(key, item))
+                        .filter(Objects::nonNull)
                         .collect(Collectors.toCollection(
                                 value instanceof Set ? LinkedHashSet::new
                                         : ArrayList::new));
             }
         }
         return value;
+    }
+
+    /**
+     * Resolve the {@link Record} that a stored link to {@code id} points at,
+     * using the {@code data} already selected for it under {@code prefix}.
+     * <p>
+     * If the link is stale, the {@link ReferenceNotFoundPolicy} for the field
+     * named {@code key} decides whether the link resolves to {@code null} or
+     * the load fails.
+     * </p>
+     *
+     * @param key the name of the housing field
+     * @param id the id of the linked record
+     * @param data the selected data that contains the linked record's state
+     * @param prefix the key prefix under which {@code data} holds that state,
+     *            or the empty string when {@code data} is the record's own
+     * @param existing the {@link Record Records} that this load already built
+     * @param concourse the connection that resolves any further read
+     * @param targets pre-fetched destination data, or {@code null}
+     * @return the referenced {@link Record}, or {@code null} if the link is
+     *         stale and the governing policy allows that
+     * @throws ReferenceNotFoundException if the link is stale and the governing
+     *             policy is {@link ReferenceNotFoundPolicy#ERROR ERROR}
+     */
+    @Nullable
+    private Record dereferenceLink(String key, long id,
+            Map<String, Set<Object>> data, String prefix,
+            ConcurrentMap<Long, Record> existing, Concourse concourse,
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
+        Record loaded = existing.get(id);
+        if(loaded != null) {
+            return loaded;
+        }
+        else {
+            String section = (String) Iterables.getLast(
+                    data.getOrDefault(prefix + SECTION_KEY, ImmutableSet.of()),
+                    null);
+            if(Empty.ness().describes(section)) {
+                applyReferenceNotFoundPolicy(key, id, concourse);
+                return null;
+            }
+            else {
+                Class<? extends Record> clazz = Reflection
+                        .getClassCasted(section);
+                return load(clazz, id, existing, connections, concourse,
+                        binding, data, prefix.isEmpty() ? null : prefix,
+                        targets);
+            }
+        }
     }
 
     /**
@@ -3412,66 +4524,66 @@ public abstract class Record implements Comparable<Record> {
      * @return the governing {@link DynamicWritePolicy}
      */
     private DynamicWritePolicy dynamicWritePolicy() {
+        Runway runway = harness();
         return runway != null ? runway.properties().dynamicWritePolicy()
                 : DynamicWritePolicy.permissive();
     }
 
     /**
      * Record on {@code saver} the uniqueness check for the (key, value) pairs
-     * in {@code data}, treating them as a single compound constraint that must
-     * not collide with any other {@link Record} in this class. A
+     * in {@code data}, treated as one compound constraint that must not collide
+     * with any other {@link Record} in the constraint's scope. The scope is
+     * this class when {@code any} is {@code false}, or the {@code window} and
+     * every descendant when {@code any} is {@code true}. A
      * {@link Sequences#isSequence(Object) sequence}-valued entry is treated
-     * element-wise: a collision on any single element is a violation.
+     * element-wise: a collision on any single element is a violation. A
+     * {@code null} value does not participate, so a constraint whose every
+     * value is {@code null} has no identity and records no check.
+     * <p>
+     * A {@link Record} that stores no class, or a class that this JVM cannot
+     * resolve, is outside every scope and therefore never collides.
+     * </p>
      *
      * @param saver the {@link Saver} the uniqueness check is recorded on
      * @param data the (key, value) pairs that collectively identify the
      *            constraint being asserted
      * @param errorName the human-readable name attached to the
      *            {@link ConstraintViolationException} thrown on a violation
+     * @param any whether the constraint applies across the {@code window}'s
+     *            class hierarchy
+     * @param window the class that bounds the constraint's identity space
      */
     private void enqueueUniquenessCheck(Saver saver, Map<String, Object> data,
-            String errorName) {
-        AtomicReference<BuildableState> $criteria = new AtomicReference<>(
-                Criteria.where().key(SECTION_KEY).operator(Operator.EQUALS)
-                        .value(getClass().getName()));
-        for (Entry<String, Object> entry : data.entrySet()) {
-            String key = entry.getKey();
-            Object value = entry.getValue();
-            if(value == null) {
-                continue; // A null value does not affect uniqueness.
-            }
-            else if(Sequences.isSequence(value)) {
-                AtomicReference<BuildableState> $sub = new AtomicReference<>(
-                        null);
-                Sequences.forEach(value, item -> {
-                    item = serializeScalarValue(item);
-                    if($sub.get() == null) {
-                        $sub.set(Criteria.where().key(key)
-                                .operator(Operator.EQUALS).value(item));
-                    }
-                    else {
-                        $sub.set($sub.get().or().key(key)
-                                .operator(Operator.EQUALS).value(item));
-                    }
-                });
-                $criteria.set(Criteria.where()
-                        .group($criteria.get().and().group($sub.get())));
+            String errorName, boolean any, Class<? extends Record> window) {
+        BuildableState criteria = conjoinEqualityClauses(null, data);
+        if(criteria != null) {
+            Set<String> scope;
+            if(any) {
+                scope = StaticAnalysis.instance().getClassHierarchy(window)
+                        .stream().map(Class::getName)
+                        .collect(Collectors.toSet());
             }
             else {
-                value = serializeScalarValue(value);
-                $criteria.set($criteria.get().and().key(key)
-                        .operator(Operator.EQUALS).value(value));
+                scope = ImmutableSet.of(getClass().getName());
             }
+            String errorMessage = AnyStrings.format("{} must be unique in {}",
+                    errorName, __);
+            saver.select(SECTION_KEY, criteria.build(), candidates -> {
+                Set<Long> records = Sets.newLinkedHashSet();
+                for (Entry<Long, Set<Object>> candidate : candidates
+                        .entrySet()) {
+                    Object section = Iterables.getLast(candidate.getValue(),
+                            null);
+                    if(scope.contains(section)) {
+                        records.add(candidate.getKey());
+                    }
+                }
+                if(!(records.isEmpty()
+                        || (records.contains(id) && records.size() == 1))) {
+                    throw new ConstraintViolationException(this, errorMessage);
+                }
+            }, Timing.DEFERRED);
         }
-        Criteria criteria = $criteria.get();
-        String errorMessage = AnyStrings.format("{} must be unique in {}",
-                errorName, __);
-        saver.find(criteria, records -> {
-            if(!(records.isEmpty()
-                    || (records.contains(id) && records.size() == 1))) {
-                throw new ConstraintViolationException(this, errorMessage);
-            }
-        });
     }
 
     /**
@@ -3491,8 +4603,11 @@ public abstract class Record implements Comparable<Record> {
             record = context.instance(record.id());
         }
         if(!record.deleted) {
-            // NOTE: The snapshot must precede the mark so a failed save
-            // restores the record to its unmarked state.
+            // NOTE: The admission must precede the mark so a record that
+            // another scope owns is refused before anything mutates it, and
+            // the snapshot must precede the mark so a failed save restores
+            // the record to its unmarked state.
+            context.admit(record);
             context.snapshot(record);
             record.deleted = true;
             context.scheduleDeletion(record);
@@ -3534,6 +4649,9 @@ public abstract class Record implements Comparable<Record> {
                             value = field.get(this);
                             value = dereference(key, value);
                         }
+                    }
+                    catch (ReferenceNotFoundException e) {
+                        throw e;
                     }
                     catch (Exception e) {/* ignore */}
                 }
@@ -3604,6 +4722,39 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return the {@link Runway} harness that ultimately backs this
+     * {@link Record Record's} {@link #binding}, or {@code null} if this
+     * {@link Record} is unbound.
+     *
+     * @return the {@link Runway} harness
+     */
+    @Nullable
+    private Runway harness() {
+        if(binding instanceof Runway) {
+            return (Runway) binding;
+        }
+        else if(binding instanceof DatabaseTransaction) {
+            return ((DatabaseTransaction) binding).database();
+        }
+        else {
+            return null;
+        }
+    }
+
+    /**
+     * Return {@code true} if this {@link Record Record's} realm membership
+     * differs from its {@link #__baseline baseline}.
+     *
+     * @return {@code true} if a save would write a realm change
+     */
+    private boolean hasRealmChanges() {
+        boolean[] changed = new boolean[1];
+        forEachSequenceDelta(ImmutableSet.copyOf(_realms), baseline(REALMS_KEY),
+                $ -> changed[0] = true, $ -> changed[0] = true);
+        return changed[0];
+    }
+
+    /**
      * Return the JSON string for this {@link Record}.
      *
      * <p>
@@ -3667,6 +4818,22 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Load the {@link Record} of type {@code clazz} identified by {@code id}
+     * within the {@code saver's} transaction, so the read sees whatever the
+     * active save already staged.
+     *
+     * @param saver the {@link Saver} for the attempt's transaction
+     * @param clazz the type of the {@link Record} to load
+     * @param id the id of the {@link Record} to load
+     * @return the loaded {@link Record}, or {@code null} if none exists
+     */
+    private <T extends Record> T loadUsingSaverContext(Saver saver,
+            Class<T> clazz, long id) {
+        return load(clazz, id, new ConcurrentHashMap<>(), connections,
+                Reflection.get("concourse", saver), binding, null, null, null);
+    }
+
+    /**
      * Return an {@link Association} mapping each of the requested {@code keys}
      * to its resolved value, without readability restrictions.
      * <p>
@@ -3705,6 +4872,30 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return the {@link ReferenceNotFoundPolicy} that governs the field named
+     * {@code key}: the one the field declares, or the one that this
+     * {@link Record Record's} {@link Runway} applies. If this {@link Record} is
+     * not {@link #assign(Runway) assigned} to a {@link Runway} instance, the
+     * {@link ReferenceNotFoundPolicy#SKIP SKIP} default applies.
+     *
+     * @param key the name of the housing field
+     * @return the governing {@link ReferenceNotFoundPolicy}
+     */
+    private ReferenceNotFoundPolicy referenceNotFoundPolicy(String key) {
+        ReferenceNotFoundPolicy declared = StaticAnalysis.instance()
+                .getReferenceNotFoundPolicy(getClass(), key);
+        if(declared != null) {
+            return declared;
+        }
+        else {
+            Runway runway = harness();
+            return runway != null
+                    ? runway.properties().referenceNotFoundPolicy()
+                    : ReferenceNotFoundPolicy.SKIP;
+        }
+    }
+
+    /**
      * Overwrite the in-memory value of {@code field} with the value the
      * database currently stores for {@code key} and invalidate the cached audit
      * trail, without touching any other state in this {@link Record}.
@@ -3712,13 +4903,34 @@ public abstract class Record implements Comparable<Record> {
      * @param field an {@link #getAtomicableField(String, Record) eligible}
      *            {@link Field}
      * @param key the field's name
+     * @param requireRecord if {@code true}, refuse a record that holds no data
+     *            in the database
+     * @throws DeletedRecordException if {@code requireRecord} is {@code true}
+     *             and this {@link Record} holds no data in the database
      * @throws IllegalStateException if the field is primitive-typed and the
      *             database no longer stores a value for {@code key}
      */
-    private void refreshAtomicableField(Field field, String key) {
+    private void refreshAtomicableField(Field field, String key,
+            boolean requireRecord) {
+        // Capture the provider so the release pairs with the request, even
+        // if user code that runs within the operation rebinds this Record.
+        ConcourseProvider connections = this.connections;
         Concourse concourse = connections.request();
         try {
-            Object stored = Iterables.getFirst(concourse.select(key, id), null);
+            Set<Object> values;
+            if(requireRecord) {
+                Map<String, Set<Object>> data = concourse
+                        .select(ImmutableList.of(SECTION_KEY, key), id);
+                if(data.getOrDefault(SECTION_KEY, ImmutableSet.of())
+                        .isEmpty()) {
+                    throw new DeletedRecordException(id);
+                }
+                values = data.getOrDefault(key, ImmutableSet.of());
+            }
+            else {
+                values = concourse.select(key, id);
+            }
+            Object stored = Iterables.getFirst(values, null);
             Object fresh = stored != null
                     ? convert(key, field.getType(), stored, concourse,
                             new ConcurrentHashMap<>(), null)
@@ -3730,7 +4942,7 @@ public abstract class Record implements Comparable<Record> {
             Reflection.set(key, fresh, this);
             clearComputeOnceCache();
             _audit = null;
-            __checksum = checksum();
+            updateBaseline(key, fresh);
         }
         finally {
             connections.release(concourse);
@@ -3852,46 +5064,238 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Atomically store {@code value} for {@code key} in this {@link Record} if
-     * and only if this {@link Record} exists in the database and currently
-     * stores no value for {@code key}.
+     * Serialize the current value of {@code field} into the form the database
+     * stores: a serialized scalar, a {@link Set} of serialized sequence
+     * elements, or {@code null} when the field holds no storable value. This
+     * method has no side effects and never touches the database.
      *
-     * @param concourse the {@link Concourse} connection to use; must not
-     *            already be in a transaction
-     * @param key the field name
-     * @param value the database-ready value to store
-     * @return {@code true} if the value is stored
+     * @param field the {@link Field} whose value is serialized
+     * @return the serialized value, or {@code null}
      */
-    private boolean setIfAbsent(Concourse concourse, String key, Object value) {
-        concourse.stage();
-        try {
-            Map<String, Set<Object>> stored = concourse
-                    .select(ImmutableList.of(SECTION_KEY, key), id);
-            if(stored.getOrDefault(SECTION_KEY, ImmutableSet.of()).isEmpty()) {
-                // Without the section metadata this Record does not exist in
-                // the database (it was never saved, or its data was erased),
-                // so a write here would orphan the value in a record that no
-                // load or find can ever return.
-                concourse.abort();
-                return false;
+    @Nullable
+    private Object serializeFieldValue(Field field) {
+        Object value = getFieldValue(field, this);
+        if(value == null) {
+            return null;
+        }
+        else if(Sequences.isSequence(value)) {
+            Set<Object> serialized = Sets.newLinkedHashSet();
+            Sequences.forEach(value,
+                    item -> serialized
+                            .add(item != null ? serializeScalarValue(item)
+                                    : NULL_PLACEHOLDER));
+            return serialized.isEmpty() ? null : serialized;
+        }
+        else {
+            return serializeScalarValue(value);
+        }
+    }
+
+    /**
+     * Stage the difference between this {@link Record Record's} current realm
+     * membership and its {@link #__baseline baseline} realm membership on
+     * {@code saver}: an add for every realm this instance joined and a remove
+     * for every realm it left. Realms that other writers changed concurrently
+     * are untouched.
+     *
+     * @param saver the {@link Saver} for the attempt's transaction
+     */
+    private void stageRealmsDelta(Saver saver) {
+        Object stored = baseline(REALMS_KEY);
+        Set<?> known = stored instanceof Set ? (Set<?>) stored
+                : ImmutableSet.of();
+        boolean changed = false;
+        for (String realm : _realms) {
+            if(!known.contains(realm)) {
+                saver.add(REALMS_KEY, realm, id);
+                changed = true;
             }
-            else if(stored.getOrDefault(key, ImmutableSet.of()).isEmpty()) {
-                concourse.set(key, value, id);
-                return concourse.commit();
+        }
+        for (Object realm : known) {
+            if(!_realms.contains(realm)) {
+                saver.remove(REALMS_KEY, realm, id);
+                changed = true;
+            }
+        }
+        if(changed && __baseline != null) {
+            Map<String, Object> baseline = Maps.newHashMap(__baseline);
+            if(_realms.isEmpty()) {
+                baseline.remove(REALMS_KEY);
             }
             else {
-                concourse.abort();
-                return false;
+                baseline.put(REALMS_KEY, ImmutableSet.copyOf(_realms));
+            }
+            __baseline = baseline;
+        }
+    }
+
+    /**
+     * Stage the difference between the {@code values} a sequence field
+     * currently holds for {@code key} and the elements in the field's
+     * {@link #__baseline baseline} on {@code saver}: an add for every element
+     * this instance introduced and a remove for every element it dropped.
+     * Elements that other writers changed concurrently are untouched.
+     *
+     * @param saver the {@link Saver} for the attempt's transaction
+     * @param key the field name
+     * @param values the field's current elements in serialized form
+     */
+    private void stageSequenceDelta(Saver saver, String key, Object[] values) {
+        Set<Object> current = Sets.newLinkedHashSet(Arrays.asList(values));
+        forEachSequenceDelta(current, baseline(key),
+                value -> saver.add(key, value, id),
+                value -> saver.remove(key, value, id));
+    }
+
+    /**
+     * Record the stale-write check for this {@link Record} on {@code saver}.
+     * The check fails the save if it would overwrite a value that another
+     * writer changed, or if the database no longer stores what this
+     * {@link Record} last saw for a key that {@link #verifyOnSave(String...)
+     * verifyOnSave} declared.
+     * <p>
+     * A value that another writer changed and changed back does not fail the
+     * save, because the stored value is the one this {@link Record} loaded.
+     * </p>
+     *
+     * @param saver the {@link Saver} for the attempt's transaction
+     * @param changed whether the save stages this {@link Record Record's}
+     *            fields
+     * @param preventStaleWrite whether the values that the save writes are
+     *            checked in addition to the declared ones
+     * @throws TransactionBoundaryException if a declared key cannot be verified
+     *             because this {@link Record} was last loaded or saved outside
+     *             the {@link Transaction} that saves it, after that
+     *             {@link Transaction} began
+     */
+    private void stageStaleWriteCheck(Saver saver, boolean changed,
+            boolean preventStaleWrite) {
+        Map<String, Set<Object>> writes = preventStaleWrite ? writeSet(changed)
+                : ImmutableMap.of();
+        // NOTE: The declared state is captured here, alongside the write set,
+        // because a bulk Saver runs the check after this save replaces the
+        // baseline, and the check must compare against what preceded it.
+        Map<String, Set<?>> verified = Maps.newLinkedHashMap();
+        if(verifyKeys != null) {
+            for (String key : verifyKeys) {
+                verified.put(key, seenValues(baseline(key)));
             }
         }
-        catch (TransactionException e) {
-            concourse.abort();
-            return false;
+        Timestamp ceiling = stalenessCeiling();
+        boolean hasConflictWindow = ceiling == null
+                || ceiling.getMicros() > checkpointTs;
+        if(!verified.isEmpty() && !hasConflictWindow && __baseline != null
+                && checkpointBinding != null && checkpointBinding != binding) {
+            // NOTE: A Transaction verifies whatever it read, so a Record it
+            // loaded needs nothing here. A Record the Transaction never read
+            // carries no such coverage, so the check below answers the
+            // declaration instead. A Record that was last loaded or saved
+            // elsewhere, after the Transaction began, saw what the
+            // Transaction's snapshot cannot, so nothing within the
+            // Transaction can answer what the declaration asks.
+            throw new TransactionBoundaryException("Cannot verify "
+                    + verified.keySet() + " in " + __ + " because this Record"
+                    + " was last loaded or saved outside the Transaction that"
+                    + " saves it, after that Transaction began; load it through"
+                    + " the Transaction");
         }
-        catch (Throwable t) {
-            concourse.abort();
-            throw t;
+        if(!verified.isEmpty()
+                && (hasConflictWindow || checkpointBinding == null)) {
+            saver.select(verified.keySet(), id, stored -> {
+                boolean stale = verified.entrySet().stream()
+                        .anyMatch(entry -> !stored
+                                .getOrDefault(entry.getKey(), ImmutableSet.of())
+                                .equals(entry.getValue()));
+                if(stale) {
+                    throw new StaleDataException(id);
+                }
+            });
         }
+        boolean writesAnyValue = writes == null || !writes.isEmpty();
+        if(writesAnyValue && hasConflictWindow) {
+            saver.diff(id, Timestamp.fromMicros(checkpointTs), ceiling,
+                    diff -> {
+                        boolean stale;
+                        if(writes == null) {
+                            stale = !diff.isEmpty();
+                        }
+                        else {
+                            stale = writes.entrySet().stream()
+                                    .anyMatch(entry -> overwrites(
+                                            diff.get(entry.getKey()),
+                                            entry.getValue()));
+                        }
+                        if(stale) {
+                            throw new StaleDataException(id);
+                        }
+                    });
+        }
+    }
+
+    /**
+     * Stage the removal of every value this {@link Record} knew to be stored
+     * for {@code key} on {@code saver}, because the corresponding field no
+     * longer holds a value. If nothing was known to be stored, nothing is
+     * staged, so a value that another writer stored concurrently survives.
+     *
+     * @param saver the {@link Saver} for the attempt's transaction
+     * @param key the field name
+     */
+    private void stageValueRemoval(Saver saver, String key) {
+        Object stored = baseline(key);
+        if(stored == null) {
+            return;
+        }
+        else if(stored instanceof Set) {
+            for (Object value : (Set<?>) stored) {
+                if(value != NULL_PLACEHOLDER) {
+                    saver.remove(key, value, id);
+                }
+            }
+        }
+        else {
+            saver.clear(key, id);
+        }
+    }
+
+    /**
+     * Return the newest state that can mark this {@link Record} as stale, or
+     * {@code null} when there is no bound.
+     * <p>
+     * Within an open {@link Transaction}, every change after the transaction
+     * began is one of the transaction's own staged writes, because no other
+     * writer is visible in the snapshot, so later state never indicates
+     * staleness.
+     * </p>
+     *
+     * @return the staleness ceiling
+     */
+    @Nullable
+    private Timestamp stalenessCeiling() {
+        if(binding instanceof DatabaseTransaction
+                && ((DatabaseTransaction) binding).open()) {
+            return Timestamp.fromMicros(
+                    ((DatabaseTransaction) binding).startTimestamp());
+        }
+        else {
+            return null;
+        }
+    }
+
+    /**
+     * Return the {@link Record} whose authorship a save can store, or
+     * {@code null} if this {@link Record} has no author that a save can store.
+     * <p>
+     * Authorship is stored as a {@link Link} that must resolve for as long as
+     * the revision it stamps survives. An {@link AdHocRecord} is never stored,
+     * so a link to one could never resolve.
+     * </p>
+     *
+     * @return the storable author, or {@code null} if there is none
+     */
+    @Nullable
+    private Record storableAuthor() {
+        return _author instanceof AdHocRecord ? null : _author;
     }
 
     /**
@@ -3957,21 +5361,81 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return the class that bounds the identity space of the {@link Unique}
+     * constraint that spans {@code members}, and verify that the members
+     * declare the constraint's scope consistently.
+     * <p>
+     * A hierarchy-scoped ({@link Unique#any() any}) constraint must declare all
+     * of its {@code members} on one class, which bounds its identity space. A
+     * class-scoped constraint is bounded by this {@link Record Record's}
+     * concrete class.
+     * </p>
+     *
+     * @param name the constraint's name, or the field's name for an unnamed
+     *            constraint
+     * @param members the fields the constraint spans
+     * @return the class that bounds the constraint's identity space
+     * @throws IllegalArgumentException if the {@code members} disagree on
+     *             {@link Unique#any() any}, or if hierarchy-scoped members are
+     *             declared by different classes
+     */
+    @SuppressWarnings("unchecked")
+    private Class<? extends Record> uniqueConstraintWindow(String name,
+            Collection<Field> members) {
+        Boolean any = null;
+        Class<? extends Record> window = null;
+        boolean hasOneDeclarer = true;
+        for (Field member : members) {
+            Unique constraint = member.getAnnotation(Unique.class);
+            if(any == null) {
+                any = constraint.any();
+            }
+            else {
+                Verify.thatArgument(any == constraint.any(),
+                        "The fields of the {} Unique constraint in {} disagree"
+                                + " on whether it applies across the class"
+                                + " hierarchy",
+                        name, __);
+            }
+            Class<? extends Record> declarer = (Class<? extends Record>) member
+                    .getDeclaringClass();
+            if(window == null) {
+                window = declarer;
+            }
+            else if(window != declarer) {
+                hasOneDeclarer = false;
+            }
+        }
+        Verify.thatArgument(!any || hasOneDeclarer,
+                "The fields of the {} Unique constraint in {} must be"
+                        + " declared by one class when it applies across the"
+                        + " class hierarchy",
+                name, __);
+        return any ? window : getClass();
+    }
+
+    /**
      * Atomically apply {@code update} to the value of {@code key} and return an
      * {@link AtomicUpdate} that carries both the replaced value and the value
      * that took effect.
      * <p>
-     * This is the core loop behind {@link #getAndUpdate(String, UnaryOperator)
+     * This is the core behind {@link #getAndUpdate(String, UnaryOperator)
      * getAndUpdate} and {@link #updateAndGet(String, UnaryOperator)
-     * updateAndGet}, which each return one side of the result.
+     * updateAndGet}, which each return one side of the result. The update
+     * resolves against this {@link Record Record's} binding, with the contract
+     * that {@link #getAndUpdate(String, UnaryOperator) getAndUpdate} states.
      * </p>
      *
      * @param key the name of the intrinsic field to update
      * @param update the function that produces the replacement value from the
      *            current one; it must not return {@code null}
      * @return the {@link AtomicUpdate} that took effect
-     * @throws RetryExhaustedException if the update cannot be committed within
-     *             the bounds of the governing {@link AtomicRetryPolicy}
+     * @throws DeletedRecordException if, when bound to an open
+     *             {@link Transaction}, this {@link Record} holds no data in the
+     *             database
+     * @throws RetryExhaustedException if, when bound to a {@link Runway}, the
+     *             update cannot be committed within the bounds of the governing
+     *             {@link AtomicRetryPolicy}
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations, or {@code update} returns {@code null}
      * @throws IllegalStateException if this {@link Record} is not pinned to a
@@ -3983,8 +5447,10 @@ public abstract class Record implements Comparable<Record> {
      */
     private <T> AtomicUpdate<T> updateAtomically(String key,
             UnaryOperator<T> update) {
-        Verify.that(runway != null, "Cannot perform an atomic update because"
-                + " this Record isn't pinned to a Runway instance");
+        Verify.that(harness() != null,
+                "Cannot atomically update {} in {} because this Record is"
+                        + " not pinned to a Runway instance",
+                key, __);
         Verify.that(!hasUnsavedChanges(),
                 "Cannot atomically update {} in {} because this Record has"
                         + " unsaved changes",
@@ -3993,40 +5459,81 @@ public abstract class Record implements Comparable<Record> {
                 "Cannot atomically update {} in {} because this Record is"
                         + " staged for deletion",
                 key, __);
-        AtomicRetryPolicy policy = runway.properties().atomicRetryPolicy();
-        int attempts = 0;
-        for (;;) {
-            Field field = getAtomicableField(key, this);
-            T current = getAtomicableFieldValue(field, this);
-            T next = update.apply(current);
-            Verify.thatArgument(next != null,
-                    "The update function cannot return null");
-            boolean settled;
-            if(Objects.equals(current, next)) {
-                // Nothing to write, but confirm the read isn't stale before
-                // treating the no-op as settled.
-                Concourse concourse = connections.request();
-                try {
-                    settled = concourse.verify(key,
-                            serializeScalarValue(current), id);
+        if(isBoundToOpenTransaction()) {
+            DatabaseTransaction transaction = (DatabaseTransaction) binding;
+            return transaction.execute(() -> {
+                // The read joins the conflict footprint. The Transaction
+                // makes the targeted write conditional on that snapshot, so
+                // another compare-and-swap is unnecessary.
+                Field field = getAtomicableField(key, this);
+                refreshAtomicableField(field, key, true);
+                T current = getAtomicableFieldValue(field, this);
+                T next = resolveAtomicUpdate(key, this, update);
+                if(next != null) {
+                    transaction.verifyOrSet(key, serializeScalarValue(next),
+                            id);
+                    transaction.recordAtomicValue(this, key, next);
+                    applyValueChange(key, next);
                 }
-                finally {
-                    connections.release(concourse);
+                return new AtomicUpdate<>(current,
+                        next != null ? next : current);
+            });
+        }
+        else {
+            AtomicRetryPolicy policy = harness().properties()
+                    .atomicRetryPolicy();
+            int attempts = 0;
+            for (;;) {
+                Field field = getAtomicableField(key, this);
+                T current = getAtomicableFieldValue(field, this);
+                T next = update.apply(current);
+                Verify.thatArgument(next != null,
+                        "The update function cannot return null");
+                boolean settled;
+                if(Objects.equals(current, next)) {
+                    // Nothing to write, but confirm the read isn't stale
+                    // before treating the no-op as settled. The provider is
+                    // captured so the release pairs with the request, even
+                    // if user code rebinds this Record.
+                    ConcourseProvider connections = this.connections;
+                    Concourse concourse = connections.request();
+                    try {
+                        settled = concourse.verify(key,
+                                serializeScalarValue(current), id);
+                    }
+                    finally {
+                        connections.release(concourse);
+                    }
+                }
+                else {
+                    settled = exchange(key, next);
+                }
+                if(settled) {
+                    return new AtomicUpdate<>(current, next);
+                }
+                else if(++attempts > policy.limit()) {
+                    throw new RetryExhaustedException(attempts);
+                }
+                else {
+                    policy.backoff(attempts);
+                    refreshAtomicableField(field, key, false);
                 }
             }
-            else {
-                settled = exchange(key, next);
-            }
-            if(settled) {
-                return new AtomicUpdate<>(current, next);
-            }
-            else if(++attempts > policy.limit()) {
-                throw new RetryExhaustedException(attempts);
-            }
-            else {
-                policy.backoff(attempts);
-                refreshAtomicableField(field, key);
-            }
+        }
+    }
+
+    /**
+     * Verify that this {@link Record} can bind to {@code binding}.
+     *
+     * @param binding the target {@link Binding}
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} other than {@code binding}
+     */
+    private void verifyCanBind(Binding binding) {
+        if(this.binding != binding && isBoundToOpenTransaction()) {
+            throw new TransactionBoundaryException(
+                    "Cannot bind " + __ + " to a different scope because it"
+                            + " is bound to an open Transaction");
         }
     }
 
@@ -4060,6 +5567,60 @@ public abstract class Record implements Comparable<Record> {
                         "Cannot set '{}' because it is not a writable field in {}",
                         key, getClass().getSimpleName()));
             }
+        }
+    }
+
+    /**
+     * Return the values that would be written if this {@link Record} were
+     * {@link #save() saved}, keyed by field name. A {@code null} value means
+     * the save replaces every value stored for that key. If the save would
+     * replace every value in the record, return {@code null}.
+     *
+     * @param changed whether the save stages this {@link Record Record's}
+     *            fields, as {@link #saveWithinTransaction(Saver, SaveContext)}
+     *            decided
+     * @return the values that would be written, or {@code null} for the whole
+     *         record
+     */
+    @Nullable
+    private Map<String, Set<Object>> writeSet(boolean changed) {
+        if(deleted) {
+            return null;
+        }
+        else {
+            Map<String, Set<Object>> writes = Maps.newLinkedHashMap();
+            Set<String> overwrites = Sets.newLinkedHashSet();
+            for (Field field : fields()) {
+                if(!Modifier.isTransient(field.getModifiers())) {
+                    String key = field.getName();
+                    MergeStrategy directive = field
+                            .getAnnotation(MergeStrategy.class);
+                    if(directive != null && directive
+                            .value() == MergeStrategy.Strategy.OVERWRITE) {
+                        overwrites.add(key);
+                    }
+                    Object current = serializeFieldValue(field);
+                    Object stored = baseline(key);
+                    if(!Objects.equals(current, stored)) {
+                        writes.put(key, stagedValues(current, stored));
+                    }
+                }
+            }
+            if(changed) {
+                overwrites.forEach(key -> writes.put(key, null));
+            }
+            else {
+                // Without a change, the save takes the path that stages no
+                // field at all, so not even an OVERWRITE field is written.
+                writes.clear();
+            }
+            Set<Object> realms = Sets.newLinkedHashSet();
+            forEachSequenceDelta(ImmutableSet.copyOf(_realms),
+                    baseline(REALMS_KEY), realms::add, realms::add);
+            if(!realms.isEmpty()) {
+                writes.put(REALMS_KEY, realms);
+            }
+            return writes;
         }
     }
 
@@ -4771,6 +6332,13 @@ public abstract class Record implements Comparable<Record> {
         private final Map<Class<? extends Record>, Map<String, Collection<Class<?>>>> fieldTypeArgumentsByClass;
 
         /**
+         * A mapping from each {@link Record} class to each of its non-internal
+         * keys whose field declares a {@link ReferenceNotFound} policy, each of
+         * which is mapped to the declared {@link ReferenceNotFoundPolicy}.
+         */
+        private final Map<Class<? extends Record>, Map<String, ReferenceNotFoundPolicy>> referenceNotFoundPoliciesByClass;
+
+        /**
          * A collection containing each {@link Record} class that has at least
          * one field whose type is a subclass of {@link Record}.
          */
@@ -4832,6 +6400,7 @@ public abstract class Record implements Comparable<Record> {
             this.deferredReferencePathsByClass = new HashMap<>();
             this.fieldsByClass = new HashMap<>();
             this.fieldTypeArgumentsByClass = new HashMap<>();
+            this.referenceNotFoundPoliciesByClass = new HashMap<>();
             this.hasRecordFieldTypeByClass = new HashSet<>();
             this.hasRecordFieldTypeByClassHierarchy = new HashSet<>();
             this.hasCollectionRecordFieldTypeByClass = new HashSet<>();
@@ -4860,6 +6429,13 @@ public abstract class Record implements Comparable<Record> {
                     fields.put(key, field);
                     fieldTypeArguments.put(key,
                             Reflection.getTypeArguments(field));
+                    ReferenceNotFound declared = field
+                            .getAnnotation(ReferenceNotFound.class);
+                    if(declared != null) {
+                        referenceNotFoundPoliciesByClass
+                                .computeIfAbsent(type, $ -> new HashMap<>())
+                                .put(key, declared.value());
+                    }
                     if(Record.class.isAssignableFrom(field.getType())) {
                         hasRecordFieldTypeByClass.add(type);
                     }
@@ -5157,6 +6733,22 @@ public abstract class Record implements Comparable<Record> {
          */
         public Set<String> getPathsHierarchy(Class<? extends Record> clazz) {
             return pathsByClassHierarchy.get(clazz);
+        }
+
+        /**
+         * Return the {@link ReferenceNotFoundPolicy} that the field named
+         * {@code key} in {@code clazz} declares.
+         *
+         * @param clazz the {@link Record} type that declares the field
+         * @param key the name of the field
+         * @return the declared {@link ReferenceNotFoundPolicy}, or {@code null}
+         *         if the field declares none
+         */
+        @Nullable
+        public ReferenceNotFoundPolicy getReferenceNotFoundPolicy(
+                Class<? extends Record> clazz, String key) {
+            return referenceNotFoundPoliciesByClass
+                    .getOrDefault(clazz, ImmutableMap.of()).get(key);
         }
 
         /**
@@ -5538,14 +7130,17 @@ public abstract class Record implements Comparable<Record> {
         // in the future
 
         /**
-         * The snapshotted value of {@link Record#_hasModifiedRealms}.
+         * The capture order of this {@link Snapshot} across every save, so a
+         * restore can identify a {@link Record Record's} temporally oldest
+         * snapshot.
          */
-        final boolean hasModifiedRealms;
+        final long sequence = SNAPSHOT_SEQUENCE.incrementAndGet();
 
         /**
-         * The snapshotted value of {@link Record#__checksum}.
+         * The snapshotted value of {@link Record#__baseline}.
          */
-        final String checksum;
+        @Nullable
+        final Map<String, Object> baseline;
 
         /**
          * The snapshotted value of {@link Record#_author}.
@@ -5558,15 +7153,47 @@ public abstract class Record implements Comparable<Record> {
         final boolean deleted;
 
         /**
+         * The snapshotted value of {@link Record#verifyKeys}.
+         */
+        @Nullable
+        final Set<String> verifyKeys;
+
+        /**
          * Construct a new instance.
          */
         Snapshot() {
-            this.hasModifiedRealms = Record.this._hasModifiedRealms;
-            this.checksum = Record.this.__checksum;
+            this.baseline = Record.this.__baseline;
             this.author = Record.this._author;
             this.deleted = Record.this.deleted;
+            this.verifyKeys = Record.this.verifyKeys;
         }
 
+    }
+
+    /**
+     * A {@link TransactionBoundaryException} is thrown when a save refuses a
+     * {@link Record} at the boundary of an open {@link Transaction}: the
+     * {@link Record} is bound to a {@link Transaction} whose commit is the only
+     * way to persist it, or it carries a declaration that the
+     * {@link Transaction} cannot verify.
+     *
+     * @author Jeff Nelson
+     */
+    static class TransactionBoundaryException extends IllegalStateException {
+
+        /**
+         * Serialization version.
+         */
+        private static final long serialVersionUID = 1L;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param message the refusal message
+         */
+        TransactionBoundaryException(String message) {
+            super(message);
+        }
     }
 
     /**
@@ -5619,14 +7246,14 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * A {@link DatabaseInterface} that reacts to the state of the
-     * {@link #runway} variable and delegates to it or throws an
-     * {@link UnsupportedOperationException} if it is {@code null}.
+     * A {@link DatabaseInterface} that reacts to the state of the tracked
+     * {@link Record} and delegates every operation to the {@link Binding} it is
+     * bound to.
      *
      * @author Jeff Nelson
      */
-    private static class ReactiveDatabaseInterface implements
-            DatabaseInterface {
+    private static class ReactiveBinding extends Binding implements
+            Transactional {
 
         /**
          * A reference to the enclosing {@link Record} whose state is watched
@@ -5639,468 +7266,93 @@ public abstract class Record implements Comparable<Record> {
          *
          * @param tracked
          */
-        private ReactiveDatabaseInterface(Record tracked) {
+        private ReactiveBinding(Record tracked) {
             this.tracked = tracked;
         }
 
         @Override
-        public <T extends Record> Set<T> find(Class<T> clazz,
-                Criteria criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
+        public <T extends Record> T create(Class<T> clazz, Object... args) {
+            return delegate().create(clazz, args);
+        }
+
+        @Nullable
+        @Override
+        public <T extends Record, V> T findAnyFirstAndUpdate(Class<T> clazz,
+                Criteria criteria, Order order, String key,
+                UnaryOperator<V> update) {
+            return delegate().findAnyFirstAndUpdate(clazz, criteria, order, key,
+                    update);
+        }
+
+        @Nullable
+        @Override
+        public <T extends Record, V> T findAnyUniqueAndUpdate(Class<T> clazz,
+                Criteria criteria, String key, UnaryOperator<V> update) {
+            return delegate().findAnyUniqueAndUpdate(clazz, criteria, key,
+                    update);
+        }
+
+        @Nullable
+        @Override
+        public <T extends Record, V> T findFirstAndUpdate(Class<T> clazz,
+                Criteria criteria, Order order, String key,
+                UnaryOperator<V> update) {
+            return delegate().findFirstAndUpdate(clazz, criteria, order, key,
+                    update);
+        }
+
+        @Nullable
+        @Override
+        public <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
+                Criteria criteria, String key, UnaryOperator<V> update) {
+            return delegate().findUniqueAndUpdate(clazz, criteria, key, update);
         }
 
         @Override
-        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-                Order order) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria, order);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
+        public <T extends Record> T intern(T record) {
+            return delegate().intern(record);
         }
 
         @Override
-        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-                Order order, Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria, order, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-                Order order, Page page, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria, order, page,
-                        realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-                Order order, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria, order, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-                Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-                Page page, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria, page, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-                Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria, Order order) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria, order);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria, Order order, Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria, order, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria, Order order, Page page, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria, order, page,
-                        realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria, Order order, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria, order, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria, Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria, Page page, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria, page, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T findAnyUnique(Class<T> clazz,
-                Criteria criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAnyUnique(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T findAnyUnique(Class<T> clazz,
-                Criteria criteria, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAnyUnique(clazz, criteria, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T findUnique(Class<T> clazz,
-                Criteria criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.findUnique(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T findUnique(Class<T> clazz,
-                Criteria criteria, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.findUnique(clazz, criteria, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T load(Class<T> clazz, long id) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, id);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T load(Class<T> clazz, long id,
-                Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, id, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz, Order order) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, order);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz, Order order,
-                Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, order, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz, Order order,
-                Page page, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, order, page, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz, Order order,
-                Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, order, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz, Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz, Page page,
-                Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, page, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz, order);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
-                Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz, order, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
-                Page page, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz, order, page, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
-                Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz, order, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
-                Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz, page, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz,
-                Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
+        public boolean save(boolean preventStaleWrites, Record... records) {
+            return delegate().save(preventStaleWrites, records);
         }
 
         @Override
         public Selections select(Selection<?>... selections) {
-            if(tracked.runway != null) {
-                return tracked.runway.select(selections);
+            return delegate().select(selections);
+        }
+
+        @Override
+        public Transaction startTransaction() {
+            return ((Transactional) delegate()).startTransaction();
+        }
+
+        @Override
+        public <T> T transactAndSupply(Function<TransactionInterface, T> work) {
+            return ((Transactional) delegate()).transactAndSupply(work);
+        }
+
+        @Override
+        <T extends Record> T load(long id) {
+            return delegate().load(id);
+        }
+
+        /**
+         * Return the {@link Binding} that the {@link #tracked} {@link Record}
+         * is currently bound to.
+         *
+         * @return the delegate {@link Binding}
+         * @throws UnsupportedOperationException if the {@link #tracked}
+         *             {@link Record} is unbound
+         */
+        private Binding delegate() {
+            if(tracked.binding != null) {
+                return tracked.binding;
             }
             else {
                 throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
+                        "No binding has been assigned to this Record");
             }
         }
 

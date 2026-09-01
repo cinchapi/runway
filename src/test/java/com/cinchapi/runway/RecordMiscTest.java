@@ -31,8 +31,9 @@ public class RecordMiscTest extends AbstractRecordTest {
     @Test
     public void testNoNoArgConstructor() {
         Flock flock = new Flock("Jeff Nelson");
-        runway.save(flock); // TODO: change
-        System.out.println(runway.load(Flock.class, flock.id()));
+        Assert.assertTrue(runway.save(flock));
+        Flock loaded = runway.load(Flock.class, flock.id());
+        Assert.assertEquals("Jeff Nelson", loaded.name);
     }
 
     @Test

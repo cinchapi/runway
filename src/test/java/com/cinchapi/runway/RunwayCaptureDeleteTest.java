@@ -50,6 +50,43 @@ public class RunwayCaptureDeleteTest extends RunwayBaseClientServerTest {
         Assert.assertEquals("Parent1", parent.name);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that deleting a record removes the stored
+     * {@link CaptureDelete} reference from every record that links to it.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link ParentRecord
+     * ParentRecords} that each hold a {@link CaptureDelete} reference to the
+     * same saved {@link ChildRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Mark the shared child for deletion and save it.</li>
+     * <li>Inspect the stored {@code child} field of each parent with the raw
+     * client, because loads self-heal dangling links.</li>
+     * <li>Load each parent and read its {@code child} field.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The stored {@code child} value is removed from
+     * both parents, and both loaded parents report a {@code null} child.
+     */
+    @Test
+    public void testCaptureDeleteNullifiesReferenceInEveryReferencingRecord() {
+        ParentRecord parent1 = new ParentRecord("Parent1");
+        ParentRecord parent2 = new ParentRecord("Parent2");
+        ChildRecord child = new ChildRecord("Shared");
+        parent1.child = child;
+        parent2.child = child;
+        Assert.assertTrue(runway.save(parent1, parent2, child));
+        child.deleteOnSave();
+        Assert.assertTrue(child.save());
+        Assert.assertTrue("Every stored reference must be removed",
+                client.select("child", parent1.id()).isEmpty());
+        Assert.assertTrue("Every stored reference must be removed",
+                client.select("child", parent2.id()).isEmpty());
+        Assert.assertNull(runway.load(ParentRecord.class, parent1.id()).child);
+        Assert.assertNull(runway.load(ParentRecord.class, parent2.id()).child);
+    }
+
     @Test
     public void testCollectionFieldWithCaptureDelete() {
         // Create a parent record with a collection of children

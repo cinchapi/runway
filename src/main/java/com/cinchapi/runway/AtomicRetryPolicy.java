@@ -23,10 +23,20 @@ import com.cinchapi.common.base.CheckedExceptions;
 import com.google.common.base.Preconditions;
 
 /**
- * An {@link AtomicRetryPolicy} governs how an atomic read-modify-write
- * operation (e.g. the {@link Record} single-key atomic operations) responds to
- * contention: how many times a failed attempt may be retried and how long to
- * pause between attempts.
+ * An {@link AtomicRetryPolicy} governs how an operation that must take effect
+ * atomically responds to contention: how many times a failed attempt may be
+ * retried and how long to pause between attempts.
+ * <p>
+ * The policy governs:
+ * </p>
+ * <ul>
+ * <li>the {@link Record} single-key atomic operations,</li>
+ * <li>the {@link DatabaseInterface} find-and-update methods, and</li>
+ * <li>the work that {@link Transactional#transact(java.util.function.Consumer)
+ * transact} and
+ * {@link Transactional#transactAndSupply(java.util.function.Function)
+ * transactAndSupply} manage.</li>
+ * </ul>
  * <p>
  * When an operation exhausts the retry {@link #limit() limit}, it throws
  * {@link RetryExhaustedException}.

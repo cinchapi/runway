@@ -44,8 +44,8 @@ public class RecordJsonTest extends AbstractRecordTest {
     public void testJsonWithLink() {
         Stock stock = new Stock();
         stock.tock = new Tock();
-        Assert.assertTrue(true); // lack of Exception means
-                                 // we pass
+        JsonElement elt = JsonParser.parseString(stock.json());
+        Assert.assertTrue(elt.getAsJsonObject().has("tock"));
     }
 
     @Test
@@ -188,6 +188,9 @@ public class RecordJsonTest extends AbstractRecordTest {
                 new TypeToken<Map<String, Object>>() {}.getType());
         Assert.assertTrue(data.containsKey("age"));
         Assert.assertEquals(nock.age.doubleValue(), data.get("age"));
+        Assert.assertFalse(
+                "null values must be omitted when serializeNullValues is off",
+                data.containsKey("name"));
     }
 
 }

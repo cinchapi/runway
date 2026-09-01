@@ -205,7 +205,7 @@ public abstract class AbstractRunwayTest extends RunwayBaseClientServerTest {
     class Student extends Record {
 
         @Nullable
-        /* package */ Float ccat;
+        Float ccat;
 
         public Set<ScoreReport> scores = Sets.newLinkedHashSet();
 
