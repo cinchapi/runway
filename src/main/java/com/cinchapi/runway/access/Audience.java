@@ -827,84 +827,87 @@ public interface Audience extends DatabaseInterface, Transactional {
             // using a private interface method.
             Multiset<Record> seen = PREVIOUSLY_FRAMED_RECORDS.get();
             seen.add(subject);
-            data = data.entrySet().stream().map(e -> {
-                String key = e.getKey();
-                Object value = e.getValue();
-                Set<String> nexts = roots.get(key);
-                // A named Record or sequence value must fall through to
-                // be framed with the target's defaults, like the
-                // default-included path; only scalars are terminal here.
-                boolean framable = value instanceof Record
-                        || (value != null && Sequences.isSequence(value));
-                if(nexts != null && nexts.isEmpty() && !framable) {
-                    return e;
-                }
-                else {
-                    String[] remaining = nexts != null
-                            ? nexts.toArray(Array.containing())
-                            : Array.containing();
-                    if(seen.contains(value)) {
-                        value = ((Record) value).get("id")
-                                + " (recursive link)";
+            try {
+                data = data.entrySet().stream().map(e -> {
+                    String key = e.getKey();
+                    Object value = e.getValue();
+                    Set<String> nexts = roots.get(key);
+                    // A named Record or sequence value must fall through to
+                    // be framed with the target's defaults, like the
+                    // default-included path; only scalars are terminal here.
+                    boolean framable = value instanceof Record
+                            || (value != null && Sequences.isSequence(value));
+                    if(nexts != null && nexts.isEmpty() && !framable) {
+                        return e;
                     }
-                    else if(value instanceof AccessControl) {
-                        Record record = (Record) value;
-                        seen.add(record);
-                        value = frame(options, ImmutableSet.copyOf(remaining),
-                                (T) record);
-                        seen.remove(record);
-                    }
-                    else if(value instanceof Record) {
-                        Record record = (Record) value;
-                        seen.add(record);
-                        value = record.map(options, remaining);
-                        seen.remove(record);
-                    }
-                    else if(Sequences.isSequence(value)) {
-                        value = Sequences.stream(value).map(item -> {
-                            if(seen.contains(item)) {
-                                item = ((Record) item).get("id")
-                                        + " (recursive link)";
-                            }
-                            else {
-                                if(item instanceof AccessControl) {
-                                    Record record = (Record) item;
-                                    seen.add(record);
-                                    item = frame(options,
+                    else {
+                        String[] remaining = nexts != null
+                                ? nexts.toArray(Array.containing())
+                                : Array.containing();
+                        if(seen.contains(value)) {
+                            value = ((Record) value).get("id")
+                                    + " (recursive link)";
+                        }
+                        else if(value instanceof AccessControl) {
+                            Record record = (Record) value;
+                            value = renderInFlight(seen, record,
+                                    () -> frame(options,
                                             ImmutableSet.copyOf(remaining),
-                                            (T) record);
-                                    seen.remove(record);
+                                            (T) record));
+                        }
+                        else if(value instanceof Record) {
+                            Record record = (Record) value;
+                            value = renderInFlight(seen, record,
+                                    () -> record.map(options, remaining));
+                        }
+                        else if(Sequences.isSequence(value)) {
+                            value = Sequences.stream(value).map(item -> {
+                                if(seen.contains(item)) {
+                                    item = ((Record) item).get("id")
+                                            + " (recursive link)";
                                 }
-                                else if(item instanceof Record) {
-                                    Record record = (Record) item;
-                                    seen.add(record);
-                                    item = record.map(options, remaining);
-                                    seen.remove(record);
+                                else {
+                                    if(item instanceof AccessControl) {
+                                        Record record = (Record) item;
+                                        item = renderInFlight(seen, record,
+                                                () -> frame(options,
+                                                        ImmutableSet.copyOf(
+                                                                remaining),
+                                                        (T) record));
+                                    }
+                                    else if(item instanceof Record) {
+                                        Record record = (Record) item;
+                                        item = renderInFlight(seen, record,
+                                                () -> record.map(options,
+                                                        remaining));
+                                    }
                                 }
-                            }
-                            return item;
-                        }).collect(Collectors.toList());
+                                return item;
+                            }).collect(Collectors.toList());
+                        }
+                        else if(nexts != null) {
+                            // This is an attempt to navigate a non-navigable
+                            // value
+                            value = null;
+                        }
+                        return new SimpleEntry<>(key, value);
                     }
-                    else if(nexts != null) {
-                        // This is an attempt to navigate a non-navigable
-                        // value
-                        value = null;
+                }).collect(Association::of, (map, entry) -> {
+                    String k = entry.getKey();
+                    Object v = entry.getValue();
+                    if(v != null) {
+                        map.merge(k, v, MergeStrategies::upsert);
                     }
-                    return new SimpleEntry<>(key, value);
+                    else {
+                        map.put(k, v);
+                    }
+                }, MergeStrategies::upsert);
+            }
+            finally {
+                seen.remove(subject);
+                if(seen.isEmpty()) {
+                    PREVIOUSLY_FRAMED_RECORDS.remove();
                 }
-            }).collect(Association::of, (map, entry) -> {
-                String k = entry.getKey();
-                Object v = entry.getValue();
-                if(v != null) {
-                    map.merge(k, v, MergeStrategies::upsert);
-                }
-                else {
-                    map.put(k, v);
-                }
-            }, MergeStrategies::upsert);
-            seen.remove(subject);
-            if(seen.isEmpty()) {
-                PREVIOUSLY_FRAMED_RECORDS.remove();
             }
         }
         else {
