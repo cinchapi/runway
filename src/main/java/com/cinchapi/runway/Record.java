@@ -4330,10 +4330,12 @@ public abstract class Record implements Comparable<Record> {
     private void deleteWithinTransaction(Saver saver, SaveContext context) {
         // NOTE: A delete notification reports the state that the record
         // stored, so the read must precede every write this deletion stages.
-        // The read exists only to feed that notification, so a save that
-        // captures no deletion state for this Record's class skips it.
+        // The read exists only to feed that notification: a save that
+        // captures no deletion state for this Record's class skips it, and
+        // because the notification cannot reject the save, the read is an
+        // observation that never costs the save a round trip of its own.
         if(context.shouldCaptureDeletionData(getClass())) {
-            saver.select(StaticAnalysis.instance().getKeys(getClass()), id,
+            saver.observe(StaticAnalysis.instance().getKeys(getClass()), id,
                     data -> context.recordDeletionData(id, data));
         }
         context.admit(this);

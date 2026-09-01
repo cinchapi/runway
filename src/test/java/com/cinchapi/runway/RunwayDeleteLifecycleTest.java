@@ -83,6 +83,49 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that the delete notification reports the
+     * state the record stored when the deleting save also audits stale writes,
+     * so the deletion-state read coexists with a read that can reject the save.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TrackedRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener that records the reported state.</li>
+     * <li>Save a {@link TrackedRecord}.</li>
+     * <li>Call {@link Record#deleteOnSave()} and save the record again with
+     * {@code preventStaleWrites} enabled.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The delete listener fires and its data reports
+     * the name the record stored.
+     */
+    @Test
+    public void testDeleteListenerReportsStoredStateWhenSaveAuditsStaleWrites()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        Map<Long, Map<String, Set<Object>>> reported = new ConcurrentHashMap<>();
+
+        runway.close();
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {
+            reported.put(id, data);
+            latch.countDown();
+        }).build();
+
+        TrackedRecord record = new TrackedRecord();
+        record.name = "Audited Delete";
+        Assert.assertTrue(record.save());
+
+        record.deleteOnSave();
+        Assert.assertTrue(runway.save(true, record));
+
+        Assert.assertTrue("Delete listener was not called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertTrue(reported.get(record.id()).get("name")
+                .contains("Audited Delete"));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a save which deletes a {@link Record}
      * does not fire the save listener.
      * <p>
