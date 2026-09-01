@@ -97,6 +97,15 @@ class DatabaseTransaction extends Binding implements Transaction {
     private boolean poisoned = false;
 
     /**
+     * The {@link Record} that an in-flight {@link #intern(Record)} is saving
+     * after its lookup found the identity unclaimed, or {@code null} when no
+     * intern save is in flight. Only the {@link #owner} thread reads or writes
+     * this.
+     */
+    @Nullable
+    private Record internCandidate = null;
+
+    /**
      * The number of operations that are in flight on this transaction. While an
      * operation is in flight, {@link #commit()} and {@link #abort()} are
      * refused, so a hook that the operation runs cannot end the transaction
@@ -452,7 +461,14 @@ class DatabaseTransaction extends Binding implements Transaction {
             return execute(() -> {
                 T match = resolveFullIdentityMatch(record);
                 if(match == null) {
-                    save(record);
+                    Record prior = internCandidate;
+                    internCandidate = record;
+                    try {
+                        save(record);
+                    }
+                    finally {
+                        internCandidate = prior;
+                    }
                     try {
                         T found = resolveFullIdentityMatch(record);
                         Verify.thatArgument(
@@ -537,6 +553,16 @@ class DatabaseTransaction extends Binding implements Transaction {
                             || t instanceof DeletedRecordException
                             || t instanceof Record.TransactionBoundaryException) {
                         throw t;
+                    }
+                    else if(internCandidate != null
+                            && t instanceof Record.ConstraintViolationException
+                            && ((Record.ConstraintViolationException) t)
+                                    .record() == internCandidate) {
+                        // This transaction just verified the identity was
+                        // unclaimed, so a uniqueness refusal on the record
+                        // being interned means a rival claimed it. Abort and
+                        // retry so the next attempt adopts the winner.
+                        throw new IdentityConflictException(t.getMessage());
                     }
                     else {
                         // A save cannot report a refusal by returning false
