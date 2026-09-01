@@ -162,6 +162,28 @@ public interface Saver {
     default void flush() {}
 
     /**
+     * Record a {@link Concourse#select(Collection, long) select} of
+     * {@code keys} in {@code record} and arrange to apply {@code observer} to
+     * the stored values, keyed by field name. The read observes the state that
+     * preceded this save's writes.
+     * <p>
+     * Unlike {@link #select(Collection, long, Consumer)}, the {@code observer}
+     * cannot reject the save: it must not throw and must not record further
+     * operations. In exchange, an implementation may defer the read into the
+     * submission that carries the terminal {@link #commit()}, so the read adds
+     * no round trip of its own.
+     * </p>
+     *
+     * @param keys the field names to read
+     * @param record the record id whose stored values are being inspected
+     * @param observer a {@link Consumer} that receives the stored values
+     */
+    default void observe(Collection<String> keys, long record,
+            Consumer<Map<String, Set<Object>>> observer) {
+        select(keys, record, observer);
+    }
+
+    /**
      * Record a {@link Concourse#reconcile(String, long, Collection) reconcile}
      * of {@code values} for {@code key} in {@code record}.
      * <p>

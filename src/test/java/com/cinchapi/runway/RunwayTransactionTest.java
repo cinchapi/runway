@@ -3421,6 +3421,44 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that the delete notification for a
+     * {@link Record} deleted within a {@link Transaction} reports the state
+     * that the record stored.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} and a delete listener
+     * that captures the reported state for {@link Item Items}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, call
+     * {@code deleteOnSave()} and {@code save()}.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The listener fires and its data reports the
+     * name that the {@link Item} stored.
+     */
+    @Test
+    public void testDeleteNotificationWithinTransactionReportsStoredState()
+            throws InterruptedException {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        AtomicReference<Map<String, Set<Object>>> reported = new AtomicReference<>();
+        runway.properties().onDelete(Item.class,
+                (id, clazz, data) -> reported.set(data));
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.deleteOnSave();
+            Assert.assertTrue(txItem.save());
+            Assert.assertTrue(transaction.commit());
+        }
+        awaitUntil(() -> reported.get() != null);
+        Assert.assertNotNull(reported.get());
+        Assert.assertTrue(reported.get().get("name").contains("widget"));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a {@link CascadeDelete} companion
      * deletion resolves within the {@link Transaction}, so the parent and the
      * companion disappear together at the commit.

@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 import javax.annotation.Nullable;
 
@@ -99,19 +100,28 @@ final class SaveContext {
     private final Set<Long> priorDeletions;
 
     /**
+     * Whether the save captures the state that a record of a given class stored
+     * when the save deletes it.
+     */
+    private final Predicate<Class<? extends Record>> shouldCaptureDeletionData;
+
+    /**
      * Whether the save fails if it would overwrite a value that another writer
      * changed.
      */
     private final boolean shouldPreventStaleWrite;
 
     /**
-     * Construct a new instance.
+     * Construct a new instance that captures no deletion state, so it serves as
+     * a {@link #merge(SaveContext) merge} target rather than as the context of
+     * a staged save. A save staged through it reports an empty
+     * {@link #deletionData(long) deletion state} to every delete listener.
      *
      * @param shouldPreventStaleWrite whether the save fails if it would
      *            overwrite a value that another writer changed
      */
     SaveContext(boolean shouldPreventStaleWrite) {
-        this(shouldPreventStaleWrite, NO_ADMISSION);
+        this(shouldPreventStaleWrite, clazz -> false, NO_ADMISSION);
     }
 
     /**
@@ -120,11 +130,16 @@ final class SaveContext {
      *
      * @param shouldPreventStaleWrite whether the save fails if it would
      *            overwrite a value that another writer changed
+     * @param shouldCaptureDeletionData whether the save captures the state that
+     *            a record of a given class stored when the save deletes it
      * @param admission the check that every {@link Record} must pass when it
      *            enters the save
      */
-    SaveContext(boolean shouldPreventStaleWrite, Consumer<Record> admission) {
-        this(shouldPreventStaleWrite, Collections.emptySet(), admission);
+    SaveContext(boolean shouldPreventStaleWrite,
+            Predicate<Class<? extends Record>> shouldCaptureDeletionData,
+            Consumer<Record> admission) {
+        this(shouldPreventStaleWrite, shouldCaptureDeletionData,
+                Collections.emptySet(), admission);
     }
 
     /**
@@ -133,14 +148,18 @@ final class SaveContext {
      *
      * @param shouldPreventStaleWrite whether the save fails if it would
      *            overwrite a value that another writer changed
+     * @param shouldCaptureDeletionData whether the save captures the state that
+     *            a record of a given class stored when the save deletes it
      * @param priorDeletions the ids of records that earlier saves in the same
      *            transaction deleted
      * @param admission the check that every {@link Record} must pass when it
      *            enters the save
      */
-    SaveContext(boolean shouldPreventStaleWrite, Set<Long> priorDeletions,
-            Consumer<Record> admission) {
+    SaveContext(boolean shouldPreventStaleWrite,
+            Predicate<Class<? extends Record>> shouldCaptureDeletionData,
+            Set<Long> priorDeletions, Consumer<Record> admission) {
         this.shouldPreventStaleWrite = shouldPreventStaleWrite;
+        this.shouldCaptureDeletionData = shouldCaptureDeletionData;
         this.priorDeletions = priorDeletions;
         this.admission = admission;
     }
@@ -214,7 +233,7 @@ final class SaveContext {
      *
      * @param id the record id
      * @return the stored state, or an empty {@link Map} if the attempt did not
-     *         delete the record
+     *         delete the record or did not capture deletion state
      */
     Map<String, Set<Object>> deletionData(long id) {
         return deletionData.getOrDefault(id, Collections.emptyMap());
@@ -386,6 +405,17 @@ final class SaveContext {
      */
     void scheduleDeletion(Record record) {
         pendingDeletions.add(record);
+    }
+
+    /**
+     * Return whether the save captures the state that a record of {@code clazz}
+     * stored when the save deletes it.
+     *
+     * @param clazz the deleted {@link Record Record's} class
+     * @return {@code true} if deletion state is captured for {@code clazz}
+     */
+    boolean shouldCaptureDeletionData(Class<? extends Record> clazz) {
+        return shouldCaptureDeletionData.test(clazz);
     }
 
     /**

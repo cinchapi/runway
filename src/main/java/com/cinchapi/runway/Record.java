@@ -4329,9 +4329,11 @@ public abstract class Record implements Comparable<Record> {
      */
     private void deleteWithinTransaction(Saver saver, SaveContext context) {
         // NOTE: A delete notification reports the state that the record
-        // stored, so the read must precede every write this deletion stages.
-        saver.select(StaticAnalysis.instance().getKeys(getClass()), id,
-                data -> context.recordDeletionData(id, data));
+        // stored, so the read must precede every write this deletion stages
+        if(context.shouldCaptureDeletionData(getClass())) {
+            saver.observe(StaticAnalysis.instance().getKeys(getClass()), id,
+                    data -> context.recordDeletionData(id, data));
+        }
         context.admit(this);
         // Mark the deletion up front so this instance speaks for its id,
         // even when it enters the delete path directly as a companion

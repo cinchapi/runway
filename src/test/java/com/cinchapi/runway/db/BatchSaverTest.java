@@ -26,6 +26,7 @@ import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.db.Saver.Timing;
+import com.google.common.collect.ImmutableSet;
 
 /**
  * Unit tests for {@link BatchSaver} that combine the shared {@link Saver}
@@ -85,6 +86,121 @@ public class BatchSaverTest extends SaverTest {
 
         Assert.assertTrue(caught);
         Assert.assertTrue(client.select("scratch", id).isEmpty());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an
+     * {@link Saver#observe(java.util.Collection, long, java.util.function.Consumer)
+     * observe} consumer that throws does not turn a committed transaction into
+     * a reported failure.
+     * <p>
+     * <strong>Start state:</strong> A record exists with {@code flag = true}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link BatchSaver}.</li>
+     * <li>Record a {@code set} of a new field's value.</li>
+     * <li>Record an {@code observe} whose consumer throws.</li>
+     * <li>Call {@code commit}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code commit} returns {@code true} without
+     * throwing, and the recorded write is durable.
+     */
+    @Test
+    public void testObserverThrowDoesNotFailCommit() {
+        long id = client.add("flag", true);
+
+        Saver saver = newSaver();
+        saver.stage();
+        saver.set("scratch", "value", id);
+        saver.observe(ImmutableSet.of("flag"), id, data -> {
+            throw new IllegalStateException("rejected");
+        });
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertEquals("value", client.get("scratch", id));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an
+     * {@link Saver#observe(java.util.Collection, long, java.util.function.Consumer)
+     * observe} consumer that throws does not stop the consumer of a later
+     * {@code observe} from running.
+     * <p>
+     * <strong>Start state:</strong> Two records exist, each with
+     * {@code flag = true}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link BatchSaver}.</li>
+     * <li>Record an {@code observe} on the first record whose consumer
+     * throws.</li>
+     * <li>Record an {@code observe} on the second record whose consumer
+     * captures the result.</li>
+     * <li>Call {@code commit}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code commit} returns {@code true} and the
+     * second consumer receives the second record's stored values.
+     */
+    @Test
+    public void testObserverThrowDoesNotBlockLaterObserver() {
+        long first = client.add("flag", true);
+        long second = client.add("flag", true);
+
+        Saver saver = newSaver();
+        saver.stage();
+        AtomicReference<Map<String, Set<Object>>> observed = new AtomicReference<>();
+        saver.observe(ImmutableSet.of("flag"), first, data -> {
+            throw new IllegalStateException("rejected");
+        });
+        saver.observe(ImmutableSet.of("flag"), second, observed::set);
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertNotNull(observed.get());
+        Assert.assertTrue(observed.get().get("flag").contains(true));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an
+     * {@link Saver#observe(java.util.Collection, long, java.util.function.Consumer)
+     * observe} that a {@code consumer} records receives the values its own read
+     * returned, because the read it belongs to rides a later submission than
+     * the one the {@code consumer} was dispatched against.
+     * <p>
+     * <strong>Start state:</strong> A record exists with
+     * {@code name = "alpha"}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link BatchSaver}.</li>
+     * <li>Record an {@link Timing#INLINE inline} {@code select} on {@code name}
+     * whose {@code consumer} records an {@code observe} of {@code name} in the
+     * matching record.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@code observe} consumer receives the
+     * stored {@code name}.
+     */
+    @Test
+    public void testObserveRecordedByConsumerReceivesItsOwnReadResult() {
+        long id = client.add("name", "alpha");
+
+        Saver saver = newSaver();
+        saver.stage();
+        AtomicReference<Map<String, Set<Object>>> observed = new AtomicReference<>();
+        saver.select("name",
+                Criteria.where().key("name").operator(Operator.EQUALS)
+                        .value("alpha"),
+                result -> saver.observe(ImmutableSet.of("name"), id,
+                        observed::set));
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertNotNull(observed.get());
+        Assert.assertEquals(ImmutableSet.of("alpha"),
+                observed.get().get("name"));
     }
 
     /**
