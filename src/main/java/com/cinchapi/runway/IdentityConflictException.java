@@ -18,10 +18,15 @@ package com.cinchapi.runway;
 import com.cinchapi.concourse.TransactionException;
 
 /**
- * A {@link TransactionException} that signals that a concurrent writer claimed
- * a {@link Record Record's} unique identity between an
- * {@link TransactionInterface#intern(Record) intern's} lookup and its save, so
- * the attempt should abort and run again to adopt the winner.
+ * Signal that an {@link TransactionInterface#intern(Record) intern} lookup
+ * observed a {@link Record Record's} unique identity as unclaimed, but the
+ * save's {@link Unique} enforcement observed a claim.
+ * <p>
+ * A managed operation retries so it can adopt a full same-class winner or
+ * report a claim that cannot be adopted as a terminal uniqueness refusal.
+ * Within a caller-owned {@link Transaction}, this exception propagates and the
+ * failed save poisons the transaction.
+ * </p>
  *
  * @author Jeff Nelson
  */

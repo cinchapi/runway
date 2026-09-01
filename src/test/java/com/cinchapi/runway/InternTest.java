@@ -230,9 +230,9 @@ public class InternTest extends RunwayBaseClientServerTest {
      * <li>Catch the expected exception.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> A {@link RetryExhaustedException} whose cause
-     * is an {@link IdentityConflictException} that reports the {@link Unique}
-     * refusal is thrown, and only the original {@link Account} exists.
+     * <strong>Expected:</strong> A {@link SuppressedRunwayException} that
+     * reports the {@link Unique} refusal is thrown, and only the original
+     * {@link Account} exists.
      */
     @Test
     public void testInternFailsLoudlyOnPartialIdentityCollision() {
@@ -243,11 +243,8 @@ public class InternTest extends RunwayBaseClientServerTest {
         try {
             runway.intern(probe);
         }
-        catch (RetryExhaustedException e) {
-            Assert.assertTrue(
-                    e.getCause() instanceof IdentityConflictException);
-            Assert.assertTrue(
-                    e.getCause().getMessage().contains("email must be unique"));
+        catch (SuppressedRunwayException e) {
+            Assert.assertTrue(e.getMessage().contains("email must be unique"));
             threw = true;
         }
         Assert.assertTrue(threw);
@@ -272,10 +269,9 @@ public class InternTest extends RunwayBaseClientServerTest {
      * <li>Catch the expected exception.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> A {@link RetryExhaustedException} whose cause
-     * is an {@link IdentityConflictException} that reports the {@link Unique}
-     * refusal is thrown, and only the two original {@link Account Accounts}
-     * exist.
+     * <strong>Expected:</strong> A {@link SuppressedRunwayException} that
+     * reports the {@link Unique} refusal is thrown, and only the two original
+     * {@link Account Accounts} exist.
      */
     @Test
     public void testInternFailsLoudlyWhenConstraintsMatchDifferentRecords() {
@@ -285,9 +281,7 @@ public class InternTest extends RunwayBaseClientServerTest {
         try {
             runway.intern(new Account("e1@example.com", "handle2", "x"));
         }
-        catch (RetryExhaustedException e) {
-            Assert.assertTrue(
-                    e.getCause() instanceof IdentityConflictException);
+        catch (SuppressedRunwayException e) {
             threw = true;
         }
         Assert.assertTrue(threw);
@@ -798,9 +792,9 @@ public class InternTest extends RunwayBaseClientServerTest {
      * <li>Catch the expected exception.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> A {@link RetryExhaustedException} whose cause
-     * is an {@link IdentityConflictException} that reports the {@link Unique}
-     * refusal is thrown, and only the original {@link Account} exists.
+     * <strong>Expected:</strong> A {@link SuppressedRunwayException} that
+     * reports the {@link Unique} refusal is thrown, and only the original
+     * {@link Account} exists.
      */
     @Test
     public void testInternFailsLoudlyWhenOnlyLaterConstraintIsClaimed() {
@@ -809,11 +803,8 @@ public class InternTest extends RunwayBaseClientServerTest {
         try {
             runway.intern(new Account("e2@example.com", "handle1", "x"));
         }
-        catch (RetryExhaustedException e) {
-            Assert.assertTrue(
-                    e.getCause() instanceof IdentityConflictException);
-            Assert.assertTrue(e.getCause().getMessage()
-                    .contains("handle must be unique"));
+        catch (SuppressedRunwayException e) {
+            Assert.assertTrue(e.getMessage().contains("handle must be unique"));
             threw = true;
         }
         Assert.assertTrue(threw);
@@ -901,8 +892,8 @@ public class InternTest extends RunwayBaseClientServerTest {
      * <li>Attempt to {@code commit()}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The save throws an
-     * {@link IdentityConflictException}, the commit attempt is refused with an
+     * <strong>Expected:</strong> The save throws a
+     * {@link SuppressedRunwayException}, the commit attempt is refused with an
      * {@link IllegalStateException}, and only the original {@link Account}
      * exists after the abort.
      */
@@ -915,7 +906,7 @@ public class InternTest extends RunwayBaseClientServerTest {
                 transaction
                         .intern(new Account("e@example.com", "handle2", "x"));
             }
-            catch (IdentityConflictException e) {
+            catch (SuppressedRunwayException e) {
                 threw = true;
             }
             Assert.assertTrue(threw);

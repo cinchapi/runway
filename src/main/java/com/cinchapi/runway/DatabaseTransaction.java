@@ -459,18 +459,23 @@ class DatabaseTransaction extends Binding implements Transaction {
     public <T extends Record> T intern(T record) {
         if(open) {
             return execute(() -> {
-                T match = resolveFullIdentityMatch(record);
-                if(match == null) {
-                    Record prior = internCandidate;
-                    internCandidate = record;
-                    try {
+                IdentityLookup<T> identity = resolveIdentity(record);
+                if(identity.match == null) {
+                    if(identity.unclaimed) {
+                        Record prior = internCandidate;
+                        internCandidate = record;
+                        try {
+                            save(record);
+                        }
+                        finally {
+                            internCandidate = prior;
+                        }
+                    }
+                    else {
                         save(record);
                     }
-                    finally {
-                        internCandidate = prior;
-                    }
                     try {
-                        T found = resolveFullIdentityMatch(record);
+                        T found = resolveIdentity(record).match;
                         Verify.thatArgument(
                                 found != null && record.id() == found.id(),
                                 "The created Record does not match the criteria");
@@ -482,7 +487,7 @@ class DatabaseTransaction extends Binding implements Transaction {
                     return record;
                 }
                 else {
-                    return match;
+                    return identity.match;
                 }
             });
         }
@@ -936,47 +941,53 @@ class DatabaseTransaction extends Binding implements Transaction {
     }
 
     /**
-     * Return the one {@link Record} that fully claims {@code record}'s unique
-     * identity, or {@code null} when no record does.
+     * Resolve {@code record}'s unique identity into an adoptable match and
+     * whether the identity is wholly unclaimed.
      * <p>
      * Each {@link Unique} constraint is evaluated within its declared scope. A
      * match is a record that agrees with every participating constraint and
-     * shares {@code record}'s concrete class. A partial claim, two different
-     * claimants, or a claimant of another class yields {@code null}, so the
-     * caller's subsequent save fails the scoped {@link Unique} enforcement,
-     * which surfaces the conflict instead of a silent adoption.
+     * shares {@code record}'s concrete class. The identity is wholly unclaimed
+     * only when no participating constraint finds a record. A partial claim,
+     * two different claimants, or a claimant of another class yields no match
+     * but records that the identity is claimed.
      * </p>
      *
      * @param record the {@link Record} whose identity is resolved
      * @param <T> the type of {@link Record}
-     * @return the full-identity match, or {@code null} when none exists
+     * @return the resolved identity
      * @throws DuplicateEntryException if more than one record matches a single
      *             constraint
      * @throws IllegalArgumentException if no field under a {@link Unique}
      *             constraint of {@code record} has a non-null value
      */
-    @Nullable
-    private <T extends Record> T resolveFullIdentityMatch(T record) {
+    private <T extends Record> IdentityLookup<T> resolveIdentity(T record) {
         Class<?> clazz = record.getClass();
         Record match = null;
+        boolean claimed = false;
+        boolean complete = true;
         for (UniqueIdentity identity : record.uniqueIdentities()) {
             Record candidate = identity.any()
                     ? findAnyUnique(identity.window(), identity.criteria())
                     : findUnique(identity.window(), identity.criteria());
-            if(candidate == null
-                    || (match != null && !candidate.equals(match))) {
-                return null;
+            if(candidate == null) {
+                complete = false;
             }
             else {
-                match = candidate;
+                claimed = true;
+                if(match == null) {
+                    match = candidate;
+                }
+                else if(!candidate.equals(match)) {
+                    complete = false;
+                }
             }
         }
-        if(match != null && match.getClass() == clazz) {
+        if(complete && match != null && match.getClass() == clazz) {
             @SuppressWarnings("unchecked") T adopted = (T) match;
-            return adopted;
+            return new IdentityLookup<>(adopted, false);
         }
         else {
-            return null;
+            return new IdentityLookup<>(null, !claimed);
         }
     }
 
@@ -1013,6 +1024,38 @@ class DatabaseTransaction extends Binding implements Transaction {
     private void verifyOwner() {
         Verify.that(Thread.currentThread() == owner,
                 "A Transaction is confined to the thread that started it");
+    }
+
+    /**
+     * The result of resolving a {@link Record Record's} unique identity.
+     *
+     * @param <T> the type of {@link Record}
+     * @author Jeff Nelson
+     */
+    private static final class IdentityLookup<T extends Record> {
+
+        /**
+         * The adoptable full match, or {@code null} when none exists.
+         */
+        @Nullable
+        private final T match;
+
+        /**
+         * Whether every participating constraint was unclaimed.
+         */
+        private final boolean unclaimed;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param match the adoptable full match, or {@code null}
+         * @param unclaimed whether every participating constraint was unclaimed
+         */
+        private IdentityLookup(@Nullable T match, boolean unclaimed) {
+            this.match = match;
+            this.unclaimed = unclaimed;
+        }
+
     }
 
 }
