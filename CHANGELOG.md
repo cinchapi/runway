@@ -130,8 +130,9 @@ This release makes stale reference handling consistent and lets users configure 
       itself changed reports its stored values, not the unsaved edits the
       caller's instance held.
     * A save reads a deleted record's stored state only when a delete
-      listener is registered, so a deployment without one pays nothing for
-      the data the notification would carry.
+      listener is registered for the record's class or a superclass, so a
+      deletion that no listener receives pays nothing for the data a
+      notification would carry.
     * A listener registered for a type still receives only records of that
       type or a subclass, and a listener that throws still does not block the
       remaining listeners.

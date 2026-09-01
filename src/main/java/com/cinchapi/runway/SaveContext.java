@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 import javax.annotation.Nullable;
 
@@ -99,9 +100,10 @@ final class SaveContext {
     private final Set<Long> priorDeletions;
 
     /**
-     * Whether the save captures the state that each record it deletes stored.
+     * Whether the save captures the state that a record of a given class stored
+     * when the save deletes it.
      */
-    private final boolean shouldCaptureDeletionData;
+    private final Predicate<Class<? extends Record>> shouldCaptureDeletionData;
 
     /**
      * Whether the save fails if it would overwrite a value that another writer
@@ -116,7 +118,7 @@ final class SaveContext {
      *            overwrite a value that another writer changed
      */
     SaveContext(boolean shouldPreventStaleWrite) {
-        this(shouldPreventStaleWrite, false, NO_ADMISSION);
+        this(shouldPreventStaleWrite, clazz -> false, NO_ADMISSION);
     }
 
     /**
@@ -126,12 +128,13 @@ final class SaveContext {
      * @param shouldPreventStaleWrite whether the save fails if it would
      *            overwrite a value that another writer changed
      * @param shouldCaptureDeletionData whether the save captures the state that
-     *            each record it deletes stored
+     *            a record of a given class stored when the save deletes it
      * @param admission the check that every {@link Record} must pass when it
      *            enters the save
      */
     SaveContext(boolean shouldPreventStaleWrite,
-            boolean shouldCaptureDeletionData, Consumer<Record> admission) {
+            Predicate<Class<? extends Record>> shouldCaptureDeletionData,
+            Consumer<Record> admission) {
         this(shouldPreventStaleWrite, shouldCaptureDeletionData,
                 Collections.emptySet(), admission);
     }
@@ -143,15 +146,15 @@ final class SaveContext {
      * @param shouldPreventStaleWrite whether the save fails if it would
      *            overwrite a value that another writer changed
      * @param shouldCaptureDeletionData whether the save captures the state that
-     *            each record it deletes stored
+     *            a record of a given class stored when the save deletes it
      * @param priorDeletions the ids of records that earlier saves in the same
      *            transaction deleted
      * @param admission the check that every {@link Record} must pass when it
      *            enters the save
      */
     SaveContext(boolean shouldPreventStaleWrite,
-            boolean shouldCaptureDeletionData, Set<Long> priorDeletions,
-            Consumer<Record> admission) {
+            Predicate<Class<? extends Record>> shouldCaptureDeletionData,
+            Set<Long> priorDeletions, Consumer<Record> admission) {
         this.shouldPreventStaleWrite = shouldPreventStaleWrite;
         this.shouldCaptureDeletionData = shouldCaptureDeletionData;
         this.priorDeletions = priorDeletions;
@@ -402,13 +405,14 @@ final class SaveContext {
     }
 
     /**
-     * Return whether the save captures the state that each record it deletes
-     * stored.
+     * Return whether the save captures the state that a record of {@code clazz}
+     * stored when the save deletes it.
      *
-     * @return {@code true} if deletion state is captured
+     * @param clazz the deleted {@link Record Record's} class
+     * @return {@code true} if deletion state is captured for {@code clazz}
      */
-    boolean shouldCaptureDeletionData() {
-        return shouldCaptureDeletionData;
+    boolean shouldCaptureDeletionData(Class<? extends Record> clazz) {
+        return shouldCaptureDeletionData.test(clazz);
     }
 
     /**

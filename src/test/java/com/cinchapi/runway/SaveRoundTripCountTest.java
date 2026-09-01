@@ -37,9 +37,9 @@ import com.cinchapi.runway.CountingConcourseConnectionPool.CountingConcourse;
  * reads costs {@code 1} round trip. A save costs {@code 2} when it needs at
  * least one {@link Unique @Unique}-uniqueness check, a
  * {@code preventStaleWrites} audit, an existence verification for a previously
- * persisted record, or the deletion-state read that a registered delete
- * listener requires. Both costs hold regardless of how many records the save
- * covers.
+ * persisted record, or the deletion-state read that a delete listener
+ * registered for the record's class (or a superclass) requires. Both costs hold
+ * regardless of how many records the save covers.
  * </p>
  *
  * @author Jeff Nelson
@@ -487,6 +487,188 @@ public class SaveRoundTripCountTest extends RunwayBaseClientServerTest {
         AtomicInteger rpcs = installCountingPool();
         Assert.assertTrue(runway.save(record));
         Assert.assertEquals(2, rpcs.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save which deletes a persisted
+     * {@link Record} costs exactly one server round trip when the only delete
+     * listener is registered for an unrelated type, because no listener can
+     * receive the record's deletion-state.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Plain} and a {@link Runway}
+     * with bulk-commands forced on and a delete listener registered for
+     * {@link UniqueNamed} only.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Rebuild {@link #runway} with a delete listener for
+     * {@link UniqueNamed} and bulk-commands forced on.</li>
+     * <li>Save a {@link Plain} before instrumentation.</li>
+     * <li>Mark the record with {@link Record#deleteOnSave()}.</li>
+     * <li>Install a {@link CountingConcourseConnectionPool} on
+     * {@link #runway}.</li>
+     * <li>Reset the RPC counter and call {@code runway.save(record)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true} and exactly one
+     * {@code submit(CommandGroup)} round trip is observed &mdash; the single
+     * writes-plus-commit submission, with no deletion-state read.
+     */
+    @Test
+    public void testDeleteWithListenerForUnrelatedTypeCostsOneRoundTrip()
+            throws Exception {
+        runway.close();
+        runway = runwayBuilder()
+                .onDelete(UniqueNamed.class, (id, clazz, data) -> {}).build();
+        Reflection.set("supportsBulkCommands", true, runway); // (authorized)
+        Plain record = new Plain("alpha", 7);
+        Assert.assertTrue(runway.save(record));
+        record.deleteOnSave();
+        AtomicInteger rpcs = installCountingPool();
+        Assert.assertTrue(runway.save(record));
+        Assert.assertEquals(1, rpcs.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save which deletes a persisted
+     * {@link Record} costs exactly two server round trips when a delete
+     * listener is registered for the record's exact type.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Plain} and a {@link Runway}
+     * with bulk-commands forced on and a delete listener registered for
+     * {@link Plain}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Rebuild {@link #runway} with a delete listener for {@link Plain} and
+     * bulk-commands forced on.</li>
+     * <li>Save a {@link Plain} before instrumentation.</li>
+     * <li>Mark the record with {@link Record#deleteOnSave()}.</li>
+     * <li>Install a {@link CountingConcourseConnectionPool} on
+     * {@link #runway}.</li>
+     * <li>Reset the RPC counter and call {@code runway.save(record)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true} and exactly two
+     * {@code submit(CommandGroup)} round trips are observed &mdash; one for the
+     * deletion-state-read-plus-writes batch and one for the commit.
+     */
+    @Test
+    public void testDeleteWithListenerForExactTypeCostsTwoRoundTrips()
+            throws Exception {
+        runway.close();
+        runway = runwayBuilder().onDelete(Plain.class, (id, clazz, data) -> {})
+                .build();
+        Reflection.set("supportsBulkCommands", true, runway); // (authorized)
+        Plain record = new Plain("alpha", 7);
+        Assert.assertTrue(runway.save(record));
+        record.deleteOnSave();
+        AtomicInteger rpcs = installCountingPool();
+        Assert.assertTrue(runway.save(record));
+        Assert.assertEquals(2, rpcs.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save which deletes a persisted
+     * {@link Record} costs exactly two server round trips when a delete
+     * listener is registered for a superclass of the record's type, because a
+     * listener receives the deletions of every subclass of its registered type.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link SpecialPlain} and a
+     * {@link Runway} with bulk-commands forced on and a delete listener
+     * registered for {@link Plain}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Rebuild {@link #runway} with a delete listener for {@link Plain} and
+     * bulk-commands forced on.</li>
+     * <li>Save a {@link SpecialPlain} before instrumentation.</li>
+     * <li>Mark the record with {@link Record#deleteOnSave()}.</li>
+     * <li>Install a {@link CountingConcourseConnectionPool} on
+     * {@link #runway}.</li>
+     * <li>Reset the RPC counter and call {@code runway.save(record)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true} and exactly two
+     * {@code submit(CommandGroup)} round trips are observed &mdash; one for the
+     * deletion-state-read-plus-writes batch and one for the commit.
+     */
+    @Test
+    public void testDeleteWithListenerForSuperclassOfTypeCostsTwoRoundTrips()
+            throws Exception {
+        runway.close();
+        runway = runwayBuilder().onDelete(Plain.class, (id, clazz, data) -> {})
+                .build();
+        Reflection.set("supportsBulkCommands", true, runway); // (authorized)
+        SpecialPlain record = new SpecialPlain("alpha", 7);
+        Assert.assertTrue(runway.save(record));
+        record.deleteOnSave();
+        AtomicInteger rpcs = installCountingPool();
+        Assert.assertTrue(runway.save(record));
+        Assert.assertEquals(2, rpcs.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save which deletes a persisted
+     * {@link Record} costs exactly two server round trips when a delete
+     * listener for the record's type is registered after the {@link Runway} is
+     * built.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Plain} and a {@link Runway}
+     * with bulk-commands forced on, built with no listeners, and a delete
+     * listener for {@link Plain} registered through
+     * {@link Runway.Properties#onDelete(Class, com.cinchapi.common.function.TriConsumer)}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Rebuild {@link #runway} with no listeners and bulk-commands forced
+     * on.</li>
+     * <li>Register a delete listener for {@link Plain} via
+     * {@code properties().onDelete}.</li>
+     * <li>Save a {@link Plain} before instrumentation.</li>
+     * <li>Mark the record with {@link Record#deleteOnSave()}.</li>
+     * <li>Install a {@link CountingConcourseConnectionPool} on
+     * {@link #runway}.</li>
+     * <li>Reset the RPC counter and call {@code runway.save(record)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true} and exactly two
+     * {@code submit(CommandGroup)} round trips are observed &mdash; one for the
+     * deletion-state-read-plus-writes batch and one for the commit.
+     */
+    @Test
+    public void testDeleteWithPostBuildListenerCostsTwoRoundTrips()
+            throws Exception {
+        runway.close();
+        runway = runwayBuilder().build();
+        Reflection.set("supportsBulkCommands", true, runway); // (authorized)
+        runway.properties().onDelete(Plain.class, (id, clazz, data) -> {});
+        Plain record = new Plain("alpha", 7);
+        Assert.assertTrue(runway.save(record));
+        record.deleteOnSave();
+        AtomicInteger rpcs = installCountingPool();
+        Assert.assertTrue(runway.save(record));
+        Assert.assertEquals(2, rpcs.get());
+    }
+
+    /**
+     * A {@link Plain} subclass, used to exercise the deletion-state read for a
+     * delete listener registered on a superclass.
+     *
+     * @author Jeff Nelson
+     */
+    public static class SpecialPlain extends Plain {
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the {@link Plain#name} value
+         * @param value the {@link Plain#value} value
+         */
+        public SpecialPlain(String name, int value) {
+            super(name, value);
+        }
+
     }
 
 }

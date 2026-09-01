@@ -613,6 +613,14 @@ public final class Runway extends Binding implements
     private TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> deleteListener;
 
     /**
+     * The {@link Record} types for which a {@link #deleteListener delete
+     * listener} is registered. A listener receives the deletions of its
+     * registered type and every subclass.
+     */
+    private final Set<Class<? extends Record>> deleteListenerTypes = Sets
+            .newConcurrentHashSet();
+
+    /**
      * The cached {@link Gateway} instance that provides intelligent routing to
      * database operations. Lazily initialized when first accessed.
      */
@@ -1241,7 +1249,7 @@ public final class Runway extends Binding implements
         try {
             boolean retrySpuriousSaveFailure = spuriousSaveFailureStrategy == SpuriousSaveFailureStrategy.RETRY;
             SaveContext context = new SaveContext(preventStaleWrites,
-                    hasDeleteListener(),
+                    this::hasDeleteListener,
                     record -> record.verifySavableThrough(this));
             int attempts = 0;
             while (true) {
@@ -1747,12 +1755,16 @@ public final class Runway extends Binding implements
     }
 
     /**
-     * Return {@code true} if a delete listener is registered.
+     * Return {@code true} if a delete listener is registered for {@code clazz}
+     * or one of its superclasses.
      *
-     * @return {@code true} if a delete listener is registered
+     * @param clazz the {@link Record} class to test
+     * @return {@code true} if a delete listener receives the deletions of
+     *         {@code clazz}
      */
-    final boolean hasDeleteListener() {
-        return deleteListener != null;
+    final boolean hasDeleteListener(Class<? extends Record> clazz) {
+        return deleteListenerTypes.stream()
+                .anyMatch(type -> type.isAssignableFrom(clazz));
     }
 
     /**
@@ -3535,6 +3547,8 @@ public final class Runway extends Binding implements
 
             db.saveListener = composeSaveListeners(saveListeners);
             db.deleteListener = composeDeleteListeners(deleteListeners);
+            deleteListeners.forEach(
+                    listener -> db.deleteListenerTypes.add(listener.getKey()));
             if(db.saveListener != null || db.deleteListener != null) {
                 db.ensureSaveNotificationInfrastructure();
             }
@@ -3874,6 +3888,7 @@ public final class Runway extends Binding implements
         public Properties onDelete(Class<? extends Record> type,
                 TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> listener) {
             ensureSaveNotificationInfrastructure();
+            deleteListenerTypes.add(type);
             TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> previous = deleteListener;
             deleteListener = (id, clazz, data) -> {
                 if(type.isAssignableFrom(clazz)) {
