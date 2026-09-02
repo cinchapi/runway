@@ -796,6 +796,19 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return {@code true} if the save graph of the {@link Record} that declares
+     * {@code field} crosses it. A transient field and a field marked
+     * {@link ExcludeFromSaveGraph} are both outside the save graph.
+     *
+     * @param field the {@link Field} to check
+     * @return {@code true} if the save graph crosses {@code field}
+     */
+    private static boolean isIncludedInSaveGraph(Field field) {
+        return !Modifier.isTransient(field.getModifiers())
+                && !field.isAnnotationPresent(ExcludeFromSaveGraph.class);
+    }
+
+    /**
      * Return {@code true} if the {@code field} is considered readable.
      *
      * @param field
@@ -2401,7 +2414,8 @@ public abstract class Record implements Comparable<Record> {
      * Save any changes made to this {@link Record}.
      * <p>
      * <strong>NOTE:</strong> This method recursively saves any linked
-     * {@link Record records}.
+     * {@link Record records}, except one held by a field marked
+     * {@link ExcludeFromSaveGraph}.
      * </p>
      * <p>
      * The save resolves against this {@link Record Record's} binding: when
@@ -2437,7 +2451,8 @@ public abstract class Record implements Comparable<Record> {
      * Save any changes made to this {@link Record}.
      * <p>
      * <strong>NOTE:</strong> This method recursively saves any linked
-     * {@link Record Records}.
+     * {@link Record Records}, except one held by a field marked
+     * {@link ExcludeFromSaveGraph}.
      * </p>
      * <p>
      * The save resolves against this {@link Record Record's} binding: when
@@ -3531,7 +3546,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Persist this {@link Record Record's} data within an active transaction,
      * enforcing field constraints and recursively saving linked {@link Record
-     * Records}.
+     * Records}, except one held by a field marked {@link ExcludeFromSaveGraph}.
      *
      * @param saver the {@link Saver} for the attempt's transaction
      * @param context the active {@link SaveContext}
@@ -3629,13 +3644,10 @@ public abstract class Record implements Comparable<Record> {
         }
         else if(!changed) {
             stageRealmsDelta(saver);
-            // This Record hasn't been modified, so simply go through each
-            // persistent field and try to save any outgoing Record references
-            // that contain modifications. A transient field is outside the
-            // Record's persistent data, so a reference it holds does not save
-            // with the Record.
+            // A save of an unmodified Record still persists the modifications
+            // that its outgoing references hold.
             for (Field field : fields()) {
-                if(!Modifier.isTransient(field.getModifiers())) {
+                if(isIncludedInSaveGraph(field)) {
                     Object value = getFieldValue(field, this);
                     saveModifiedReferenceWithinTransaction(value, saver,
                             context);
@@ -3671,7 +3683,8 @@ public abstract class Record implements Comparable<Record> {
                                         alreadyVerifiedUniqueConstraints);
                             }
                         }
-                        value = transform(value, saver, context);
+                        value = transform(value, saver, context,
+                                isIncludedInSaveGraph(field));
                         if(value.getClass().isArray()) {
                             if(overwrite) {
                                 saver.reconcile(key, id, (Object[]) value);
@@ -5310,10 +5323,10 @@ public abstract class Record implements Comparable<Record> {
      * objects.
      * </p>
      * <p>
-     * If the value is an instance of {@link Record}, it's saved within the
-     * current {@link Concourse concourse} transaction and linked. If the value
-     * is a {@link DeferredReference}, it is similarly saved if the reference
-     * was {@link DeferredReference#get() loaded}.
+     * A {@link Record} the value holds is linked, and is also saved within the
+     * current {@link Concourse concourse} transaction when {@code cascade} is
+     * {@code true}. A {@link DeferredReference} behaves the same when the
+     * reference is {@link DeferredReference#get() loaded}.
      * </p>
      * <p>
      * For simplicity, all {@link Sequences#isSequence(Object) Sequences} are
@@ -5323,16 +5336,19 @@ public abstract class Record implements Comparable<Record> {
      * @param value the value to be transformed
      * @param saver the {@link Saver} for the attempt's transaction
      * @param context the active {@link SaveContext}
+     * @param cascade {@code true} if a {@link Record} that {@code value} holds
+     *            saves within the current transaction, or {@code false} if the
+     *            save only links it
      * @return a {@link Concourse} primitive or an array of {@link Concourse}
      *         primitives
      */
     @SuppressWarnings("rawtypes")
     private Object transform(@Nonnull Object value, Saver saver,
-            SaveContext context) {
+            SaveContext context, boolean cascade) {
         if(Sequences.isSequence(value)) {
             ArrayBuilder<Object> array = ArrayBuilder.builder();
             Sequences.forEach(value, item -> {
-                array.add(transform(item, saver, context));
+                array.add(transform(item, saver, context, cascade));
             });
             return array.length() > 0 ? array.build() : Array.containing();
         }
@@ -5352,7 +5368,7 @@ public abstract class Record implements Comparable<Record> {
 
             // Ensure that Record references are saved within the current
             // transaction
-            if(record != null && !context.contains(record)) {
+            if(cascade && record != null && !context.contains(record)) {
                 record.saveWithinTransaction(saver, context);
             }
 

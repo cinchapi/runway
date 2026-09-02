@@ -246,6 +246,23 @@ player.save();
 
 Annotate a field with `@MergeStrategy(OVERWRITE)` when it must write its whole state on every save instead.
 
+### Stop a save at a link
+
+A save follows every link it can reach, so it visits and may write the whole reachable graph. Annotate a field with `@ExcludeFromSaveGraph` to stop it there.
+
+```java
+public class Response extends Record {
+    @ExcludeFromSaveGraph
+    public Prompt prompt;    // saving a Response never writes the Prompt
+}
+```
+
+The link is still written, so the `Response` records which `Prompt` it answers, and a load still resolves it. What changes is everything behind the link: the `Prompt` is neither read nor written by the save, and it does not join the save's conflict footprint.
+
+The one caveat: a save no longer creates a record it reaches only through such a field. Save the referenced record yourself, or the link points at a record that does not exist.
+
+Everything else reaches through the field as it always did, including loading, `@CascadeDelete`, `@JoinDelete`, `@CaptureDelete`, and the binding that decides which scope a record belongs to.
+
 ### Fail if a value I write is out of date
 
 Pass `true` to reject the save when another writer changed a value this save writes, after the instance loaded it.
@@ -799,6 +816,7 @@ Runway db = Runway.builder()
 | Constraints | `@Required`, `@Unique`, `@ValidatedBy` |
 | Record linking | `Record`-typed fields, `DeferredReference` |
 | Delete propagation | `@CascadeDelete`, `@JoinDelete`, `@CaptureDelete` |
+| Save propagation | `@ExcludeFromSaveGraph` |
 | Virtual properties | `@Derived`, `@Computed` |
 | Multi-tenancy | `Realms` |
 | Access control | `AccessControl` + `Audience` |
