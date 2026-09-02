@@ -801,6 +801,17 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return {@code true} if the save graph of the {@link Record} that declares
+     * {@code field} crosses it.
+     *
+     * @param field the {@link Field} to check
+     * @return {@code true} if the save graph crosses {@code field}
+     */
+    private static boolean isIncludedInSaveGraph(Field field) {
+        return !field.isAnnotationPresent(ExcludeFromSaveGraph.class);
+    }
+
+    /**
      * Return {@code true} if the {@code field} is considered readable.
      *
      * @param field
@@ -3646,8 +3657,8 @@ public abstract class Record implements Comparable<Record> {
             // Record's persistent data, so a reference it holds does not save
             // with the Record.
             for (Field field : fields()) {
-                if(!Modifier.isTransient(field.getModifiers()) && !field
-                        .isAnnotationPresent(ExcludeFromSaveGraph.class)) {
+                if(!Modifier.isTransient(field.getModifiers())
+                        && isIncludedInSaveGraph(field)) {
                     Object value = getFieldValue(field, this);
                     saveModifiedReferenceWithinTransaction(value, saver,
                             context);
@@ -3684,8 +3695,7 @@ public abstract class Record implements Comparable<Record> {
                             }
                         }
                         value = transform(value, saver, context,
-                                !field.isAnnotationPresent(
-                                        ExcludeFromSaveGraph.class));
+                                isIncludedInSaveGraph(field));
                         if(value.getClass().isArray()) {
                             if(overwrite) {
                                 saver.reconcile(key, id, (Object[]) value);
@@ -4138,9 +4148,9 @@ public abstract class Record implements Comparable<Record> {
      */
     private void collectGraph(Set<Record> graph, Set<Record> seen) {
         if(!seen.contains(this) && graph.add(this)) {
-            fields().stream().filter(field -> !Modifier
-                    .isTransient(field.getModifiers())
-                    && !field.isAnnotationPresent(ExcludeFromSaveGraph.class))
+            fields().stream()
+                    .filter(field -> !Modifier.isTransient(field.getModifiers())
+                            && isIncludedInSaveGraph(field))
                     .map(field -> Reflection.get(field.getName(), this))
                     .forEach(value -> forEachReachableRecord(value,
                             record -> record.collectGraph(graph, seen)));
