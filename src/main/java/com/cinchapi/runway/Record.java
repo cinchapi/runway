@@ -5323,10 +5323,10 @@ public abstract class Record implements Comparable<Record> {
      * objects.
      * </p>
      * <p>
-     * If the value is an instance of {@link Record}, it's saved within the
-     * current {@link Concourse concourse} transaction and linked. If the value
-     * is a {@link DeferredReference}, it is similarly saved if the reference
-     * was {@link DeferredReference#get() loaded}.
+     * A {@link Record} the value holds is linked, and is also saved within the
+     * current {@link Concourse concourse} transaction when {@code cascade} is
+     * {@code true}. A {@link DeferredReference} behaves the same when the
+     * reference is {@link DeferredReference#get() loaded}.
      * </p>
      * <p>
      * For simplicity, all {@link Sequences#isSequence(Object) Sequences} are
