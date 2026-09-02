@@ -718,7 +718,9 @@ class DatabaseTransaction extends Binding implements Transaction {
     /**
      * Bind {@code record}, and every loaded {@link Record} that is reachable
      * from its persistent (non-transient) fields, to this {@link Transaction},
-     * so each {@link Record#save() save} stages within it.
+     * so each {@link Record#save() save} stages within it. A {@link Record}
+     * reachable only through a field marked {@link ExcludeFromSaveGraph} does
+     * not join.
      *
      * @param record the {@link Record} that joins this {@link Transaction}
      */

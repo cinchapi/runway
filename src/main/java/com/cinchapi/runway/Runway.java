@@ -769,7 +769,8 @@ public final class Runway extends Binding implements
      * Create a new {@link Record} of the specified {@code clazz} that is bound
      * to this {@link Runway} instance, so a direct {@link Record#save() save}
      * persists within it. Every {@link Record} reachable from the {@code args}
-     * is bound to it as well.
+     * is bound to it as well, except one reachable only through a field marked
+     * {@link ExcludeFromSaveGraph}.
      * <p>
      * The returned {@link Record} is not saved to the database until
      * {@link Record#save()} is called.

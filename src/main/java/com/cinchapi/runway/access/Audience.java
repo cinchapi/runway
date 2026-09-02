@@ -250,9 +250,11 @@ public interface Audience extends DatabaseInterface, Transactional {
      * The returned {@link Record} is not saved to the database until
      * {@link Record#save()} is called, and it is bound to that same context, so
      * a direct {@link Record#save() save} persists within it (e.g., within a
-     * {@link com.cinchapi.runway.Transaction Transaction}). If this method
-     * throws, then every {@link Record} reachable from the {@code args} keeps
-     * the binding it had.
+     * {@link com.cinchapi.runway.Transaction Transaction}). A {@link Record}
+     * reachable only through a field marked
+     * {@link com.cinchapi.runway.ExcludeFromSaveGraph ExcludeFromSaveGraph}
+     * keeps the binding it had. If this method throws, then every
+     * {@link Record} reachable from the {@code args} keeps the binding it had.
      * </p>
      *
      * @param clazz the type of {@link Record} to create

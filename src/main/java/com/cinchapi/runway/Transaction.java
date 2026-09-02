@@ -29,8 +29,9 @@ package com.cinchapi.runway;
  * is bound to the transaction, so each {@link Record#save() save} stages within
  * it. A {@link Record} {@link #create(Class, Object...) created} through the
  * view is bound to it as well. A {@link Record} that is not bound to the
- * transaction, including one constructed directly, operates against its own
- * binding even while the transaction is open.
+ * transaction, including one constructed directly or reachable only through a
+ * field marked {@link ExcludeFromSaveGraph}, operates against its own binding
+ * even while the transaction is open.
  * </p>
  * <p>
  * An {@link com.cinchapi.runway.access.Audience Audience} loaded through the
