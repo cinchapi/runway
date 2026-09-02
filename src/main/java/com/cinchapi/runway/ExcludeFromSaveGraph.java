@@ -31,25 +31,15 @@ import java.lang.annotation.Target;
  * themselves are neither read nor written by that save, and they do not join
  * its conflict footprint.
  * </p>
- * <h2>Scope</h2>
  * <p>
- * The exclusion belongs to the field, not to the {@link Record Records} the
- * field points at. A save that reaches one of those {@link Record Records}
- * through an unannotated field writes it there.
+ * A save that reaches one of those {@link Record Records} through an
+ * unannotated field writes it there.
  * </p>
  * <p>
  * The exclusion governs the save graph only. Loading, {@link CascadeDelete},
  * {@link JoinDelete}, {@link CaptureDelete} and reference repair reach an
  * excluded {@link Record} as they do an ordinary one.
  * </p>
- * <h2>Scope binding</h2>
- * <p>
- * Binding is unaffected. A {@link Transaction} that saves, creates or loads the
- * declaring {@link Record} binds an excluded {@link Record} the same as any
- * other, so the {@link Transaction} owns it and a save of it stages within the
- * {@link Transaction} rather than committing on its own.
- * </p>
- * <h2>Precondition</h2>
  * <p>
  * <strong>NOTE:</strong> A save does not create a {@link Record} it reaches
  * only through an annotated field. An unsaved {@link Record} in such a field

@@ -3644,11 +3644,8 @@ public abstract class Record implements Comparable<Record> {
         }
         else if(!changed) {
             stageRealmsDelta(saver);
-            // This Record hasn't been modified, so simply go through each
-            // persistent field and try to save any outgoing Record references
-            // that contain modifications. A transient field is outside the
-            // Record's persistent data, so a reference it holds does not save
-            // with the Record.
+            // A save of an unmodified Record still persists the modifications
+            // that its outgoing references hold.
             for (Field field : fields()) {
                 if(isIncludedInSaveGraph(field)) {
                     Object value = getFieldValue(field, this);
@@ -5329,8 +5326,7 @@ public abstract class Record implements Comparable<Record> {
      * If the value is an instance of {@link Record}, it's saved within the
      * current {@link Concourse concourse} transaction and linked. If the value
      * is a {@link DeferredReference}, it is similarly saved if the reference
-     * was {@link DeferredReference#get() loaded}. A {@code value} that does not
-     * {@code cascade} is linked without being saved.
+     * was {@link DeferredReference#get() loaded}.
      * </p>
      * <p>
      * For simplicity, all {@link Sequences#isSequence(Object) Sequences} are
