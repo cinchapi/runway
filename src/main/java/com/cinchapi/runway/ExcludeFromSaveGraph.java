@@ -22,26 +22,27 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Annotation to exclude the {@link Record Records} a field points at from the
- * save graph of the {@link Record} that declares it.
+ * Annotation to ensure the {@link Record Records} to which a field points are
+ * excluded from the <strong>save graph</strong> of the {@link Record} that
+ * declares it.
  * <p>
- * A {@link Record#save() save} writes the field's link values, so the declaring
- * {@link Record} still records which {@link Record Records} the field points
- * at, and a load still resolves them. The excluded {@link Record Records}
+ * When this annotation is applied, the source {@link Record} will still ensure
+ * that the target is stored within the database as a link (so loads will still
+ * resolve it). But the content of the excluded {@link Record Records}
  * themselves are neither read nor written by that save, so the save does not
  * check them for staleness or existence.
  * </p>
  * <p>
- * A save that reaches one of those {@link Record Records} through an
- * unannotated field writes it there.
+ * Nevertheless, a save that reaches one of those {@link Record Records} through
+ * an unannotated field writes it there in normal course.
  * </p>
  * <p>
- * The exclusion governs the save graph only. Loading, {@link CascadeDelete},
- * {@link JoinDelete}, {@link CaptureDelete}, reference repair and the binding
- * that scopes a {@link Record} to a {@link Runway} or {@link Transaction} reach
- * an excluded {@link Record} as they do an ordinary one. A save through a
- * {@link Transaction} therefore binds the excluded {@link Record} to that
- * {@link Transaction}, even though it does not write it.
+ * <strong>NOTE:</strong> The exclusion governs the save graph only. Loading,
+ * {@link CascadeDelete}, {@link JoinDelete}, {@link CaptureDelete}, reference
+ * repair and the binding that scopes a {@link Record} to a {@link Runway} or
+ * {@link Transaction} reach an excluded {@link Record} as they do an ordinary
+ * one. A save through a {@link Transaction} therefore binds the excluded
+ * {@link Record} to that {@link Transaction}, even though it does not write it.
  * </p>
  * <p>
  * <strong>NOTE:</strong> A save does not create a {@link Record} it reaches
