@@ -15,12 +15,14 @@
  */
 package com.cinchapi.runway;
 
+import java.util.List;
 import java.util.function.Consumer;
 
 import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.concourse.Concourse;
+import com.google.common.collect.Lists;
 
 /**
  * Unit tests for {@link ExcludeFromSaveGraph}.
@@ -135,6 +137,73 @@ public class ExcludeFromSaveGraphTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a save does not write a {@link Record}
+     * that a collection-valued {@link ExcludeFromSaveGraph} field holds.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Holder} whose excluded
+     * collection field holds a saved {@link Referenced}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Change the {@link Referenced Referenced's} label in memory.</li>
+     * <li>Change the {@link Holder Holder's} own name and save it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The stored {@link Referenced} keeps its
+     * original label.
+     */
+    @Test
+    public void testSaveDoesNotPersistReferenceChangesWhenExcludedFieldIsACollection() {
+        Referenced referenced = new Referenced();
+        referenced.label = "original";
+        Holder holder = new Holder(null);
+        holder.excludedMany = Lists.newArrayList(referenced);
+        holder.name = "first";
+        Assert.assertTrue(runway.save(holder, referenced));
+
+        referenced.label = "changed";
+        holder.name = "second";
+        Assert.assertTrue(holder.save());
+
+        Assert.assertEquals("original",
+                runway.load(Referenced.class, referenced.id()).label);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save does not write a {@link Record}
+     * that a {@link DeferredReference} in an {@link ExcludeFromSaveGraph} field
+     * holds.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Holder} whose excluded
+     * deferred field holds a saved {@link Referenced}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Change the {@link Referenced Referenced's} label in memory.</li>
+     * <li>Change the {@link Holder Holder's} own name and save it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The stored {@link Referenced} keeps its
+     * original label.
+     */
+    @Test
+    public void testSaveDoesNotPersistReferenceChangesWhenExcludedFieldIsDeferred() {
+        Referenced referenced = new Referenced();
+        referenced.label = "original";
+        Holder holder = new Holder(null);
+        holder.excludedDeferred = new DeferredReference<>(referenced);
+        holder.name = "first";
+        Assert.assertTrue(runway.save(holder, referenced));
+
+        referenced.label = "changed";
+        holder.name = "second";
+        Assert.assertTrue(holder.save());
+
+        Assert.assertEquals("original",
+                runway.load(Referenced.class, referenced.id()).label);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a save writes the link values of an
      * {@link ExcludeFromSaveGraph} field.
      * <p>
@@ -162,6 +231,37 @@ public class ExcludeFromSaveGraphTest extends RunwayBaseClientServerTest {
 
         Assert.assertEquals(referenced.id(),
                 runway.load(Holder.class, holder.id()).excluded.id());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save does not create a
+     * {@link Record} it reaches only through an {@link ExcludeFromSaveGraph}
+     * field, so the link it writes resolves to nothing.
+     * <p>
+     * <strong>Start state:</strong> An unsaved {@link Holder} whose excluded
+     * field links an unsaved {@link Referenced}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save the {@link Holder} alone.</li>
+     * <li>Load the {@link Referenced} by its id.</li>
+     * <li>Load the {@link Holder}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link Referenced} does not exist, and the
+     * loaded {@link Holder Holder's} excluded field is {@code null} under the
+     * governing {@link ReferenceNotFoundPolicy#SKIP} policy.
+     */
+    @Test
+    public void testSaveDoesNotCreateRecordBehindExcludedField() {
+        Referenced referenced = new Referenced();
+        referenced.label = "never saved";
+        Holder holder = new Holder(referenced);
+        holder.name = "first";
+        Assert.assertTrue(holder.save());
+
+        Assert.assertNull(runway.load(Referenced.class, referenced.id()));
+        Assert.assertNull(runway.load(Holder.class, holder.id()).excluded);
     }
 
     /**
@@ -639,6 +739,20 @@ public class ExcludeFromSaveGraphTest extends RunwayBaseClientServerTest {
          */
         @ExcludeFromSaveGraph
         Referenced excluded;
+
+        /**
+         * A collection of links that a save writes without visiting the
+         * {@link Referenced Referenceds} they point at.
+         */
+        @ExcludeFromSaveGraph
+        List<Referenced> excludedMany;
+
+        /**
+         * A deferred link that a save writes without visiting the
+         * {@link Referenced} it points at.
+         */
+        @ExcludeFromSaveGraph
+        DeferredReference<Referenced> excludedDeferred;
 
         /**
          * A link that a save follows.
