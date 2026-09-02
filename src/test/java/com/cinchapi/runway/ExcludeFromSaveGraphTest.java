@@ -398,8 +398,48 @@ public class ExcludeFromSaveGraphTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that a save within a {@link Transaction}
-     * does not claim a {@link Record} it reaches only through an
+     * does not write a {@link Record} it reaches only through an
      * {@link ExcludeFromSaveGraph} field.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Holder} whose excluded field
+     * links a saved {@link Referenced}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Change the {@link Referenced Referenced's} label in memory.</li>
+     * <li>Start a {@link Transaction}, change the {@link Holder Holder's} own
+     * name, save the {@link Holder} through the {@link Transaction} and commit
+     * it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The commit stores the new {@link Holder} name
+     * and the stored {@link Referenced} keeps its original label.
+     */
+    @Test
+    public void testTransactionSaveDoesNotPersistReferenceChangesWhenFieldIsExcluded() {
+        Referenced referenced = new Referenced();
+        referenced.label = "original";
+        Holder holder = new Holder(referenced);
+        holder.name = "first";
+        Assert.assertTrue(runway.save(holder, referenced));
+
+        referenced.label = "changed";
+        try (Transaction transaction = runway.startTransaction()) {
+            holder.name = "second";
+            Assert.assertTrue(transaction.save(holder));
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals("second",
+                runway.load(Holder.class, holder.id()).name);
+        Assert.assertEquals("original",
+                runway.load(Referenced.class, referenced.id()).label);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save within a {@link Transaction}
+     * binds a {@link Record} it reaches only through an
+     * {@link ExcludeFromSaveGraph} field, because the exclusion bounds the save
+     * graph rather than the scope a {@link Record} belongs to.
      * <p>
      * <strong>Start state:</strong> A saved {@link Holder} whose excluded field
      * links a saved {@link Referenced}.
@@ -412,53 +452,15 @@ public class ExcludeFromSaveGraphTest extends RunwayBaseClientServerTest {
      * and save it through the {@link Runway}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The {@link Runway} save succeeds, because the
-     * {@link Transaction} never took ownership of the {@link Referenced}.
+     * <strong>Expected:</strong> The {@link Runway} save is refused with an
+     * {@link IllegalStateException}, because the {@link Transaction} owns the
+     * {@link Referenced}.
      */
     @Test
-    public void testTransactionSaveDoesNotClaimRecordBehindExcludedField() {
+    public void testTransactionSaveClaimsRecordBehindExcludedField() {
         Referenced referenced = new Referenced();
         referenced.label = "original";
         Holder holder = new Holder(referenced);
-        holder.name = "first";
-        Assert.assertTrue(runway.save(holder, referenced));
-
-        try (Transaction transaction = runway.startTransaction()) {
-            holder.name = "second";
-            Assert.assertTrue(transaction.save(holder));
-
-            referenced.label = "changed";
-            Assert.assertTrue(runway.save(referenced));
-        }
-        Assert.assertEquals("changed",
-                runway.load(Referenced.class, referenced.id()).label);
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that a save within a {@link Transaction}
-     * claims a {@link Record} it reaches through a field with no
-     * {@link ExcludeFromSaveGraph}, so the coverage above is attributable to
-     * the annotation.
-     * <p>
-     * <strong>Start state:</strong> A saved {@link PlainHolder} whose reference
-     * field links a saved {@link Referenced}.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Start a {@link Transaction} and save the {@link PlainHolder} through
-     * it.</li>
-     * <li>While the {@link Transaction} is open, change the {@link Referenced}
-     * and save it through the {@link Runway}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The {@link Runway} save is refused with an
-     * {@link IllegalStateException}.
-     */
-    @Test
-    public void testTransactionSaveClaimsRecordBehindPlainField() {
-        Referenced referenced = new Referenced();
-        referenced.label = "original";
-        PlainHolder holder = new PlainHolder(referenced);
         holder.name = "first";
         Assert.assertTrue(runway.save(holder, referenced));
 
@@ -475,42 +477,6 @@ public class ExcludeFromSaveGraphTest extends RunwayBaseClientServerTest {
                 Assert.assertTrue(e.getMessage().contains("Transaction"));
             }
         }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that
-     * {@link DatabaseInterface#create(Class, Object...) create} within a
-     * {@link Transaction} does not claim a {@link Record} that the new
-     * {@link Record} holds in an {@link ExcludeFromSaveGraph} field.
-     * <p>
-     * <strong>Start state:</strong> A saved {@link Referenced}.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Start a {@link Transaction} and create a {@link Holder} over the
-     * {@link Referenced} through it.</li>
-     * <li>While the {@link Transaction} is open, change the {@link Referenced}
-     * and save it through the {@link Runway}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The {@link Runway} save succeeds, because the
-     * {@link Transaction} never took ownership of the {@link Referenced}.
-     */
-    @Test
-    public void testTransactionCreateDoesNotClaimRecordBehindExcludedField() {
-        Referenced referenced = new Referenced();
-        referenced.label = "original";
-        Assert.assertTrue(runway.save(referenced));
-
-        try (Transaction transaction = runway.startTransaction()) {
-            Holder holder = transaction.create(Holder.class, referenced);
-            holder.name = "first";
-
-            referenced.label = "changed";
-            Assert.assertTrue(runway.save(referenced));
-        }
-        Assert.assertEquals("changed",
-                runway.load(Referenced.class, referenced.id()).label);
     }
 
     /**

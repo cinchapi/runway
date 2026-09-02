@@ -437,11 +437,6 @@ public abstract class Record implements Comparable<Record> {
      * Capture the binding of every loaded {@link Record} that is reachable from
      * the {@code values} and is not bound to {@code owner}, and return a task
      * that restores each captured binding.
-     * <p>
-     * A {@link Record} that is reachable only through a field marked
-     * {@link ExcludeFromSaveGraph} is not captured, consistent with
-     * {@link #bindGraph(Binding, ConcourseProvider, Set) bindGraph}.
-     * </p>
      *
      * @param values the values whose reachable {@link Record Records} are
      *            captured
@@ -3076,10 +3071,6 @@ public abstract class Record implements Comparable<Record> {
      * every loaded {@link Record} that is reachable from its persistent
      * (non-transient) fields, to {@code binding}.
      * <p>
-     * A field marked {@link ExcludeFromSaveGraph} bounds the reach, so a
-     * {@link Record} that only it points at keeps the binding it holds.
-     * </p>
-     * <p>
      * A {@link DeferredReference} that was never {@link DeferredReference#get()
      * accessed} holds no loaded {@link Record} to bind; when it is accessed, it
      * resolves through its owner's binding at that moment.
@@ -4138,10 +4129,6 @@ public abstract class Record implements Comparable<Record> {
      * Collect this {@link Record}, and every loaded {@link Record} reachable
      * from its persistent (non-transient) fields, in {@code graph}, skipping
      * any {@link Record} in {@code seen} and the graph behind it.
-     * <p>
-     * A field marked {@link ExcludeFromSaveGraph} bounds the reach, so a
-     * {@link Record} that only it points at is not collected.
-     * </p>
      *
      * @param graph the identity set that receives the graph
      * @param seen the identity set of {@link Record Records} that are already
@@ -4149,7 +4136,8 @@ public abstract class Record implements Comparable<Record> {
      */
     private void collectGraph(Set<Record> graph, Set<Record> seen) {
         if(!seen.contains(this) && graph.add(this)) {
-            fields().stream().filter(Record::isIncludedInSaveGraph)
+            fields().stream().filter(
+                    field -> !Modifier.isTransient(field.getModifiers()))
                     .map(field -> Reflection.get(field.getName(), this))
                     .forEach(value -> forEachReachableRecord(value,
                             record -> record.collectGraph(graph, seen)));

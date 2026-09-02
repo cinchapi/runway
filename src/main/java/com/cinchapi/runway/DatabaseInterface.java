@@ -332,8 +332,7 @@ public interface DatabaseInterface {
      * Create a new {@link Record} of the specified {@code clazz} that is bound
      * to this {@link DatabaseInterface}, so a direct {@link Record#save() save}
      * persists within it. Every {@link Record} reachable from the {@code args}
-     * is bound to it as well, except one reachable only through a field marked
-     * {@link ExcludeFromSaveGraph}.
+     * is bound to it as well.
      * <p>
      * The returned {@link Record} is not saved to the database until
      * {@link Record#save()} is called.

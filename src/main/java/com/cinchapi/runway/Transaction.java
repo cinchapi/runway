@@ -28,10 +28,7 @@ package com.cinchapi.runway;
  * Every loaded {@link Record}, including the records reachable from its fields,
  * is bound to the transaction, so each {@link Record#save() save} stages within
  * it. A {@link Record} {@link #create(Class, Object...) created} through the
- * view is bound to it as well, and so is a {@link Record} that a load resolves
- * through a field marked {@link ExcludeFromSaveGraph}. A save or a creation
- * does not reach through such a field, so a {@link Record} that only it points
- * at keeps the binding it holds. A {@link Record} that is not bound to the
+ * view is bound to it as well. A {@link Record} that is not bound to the
  * transaction, including one constructed directly, operates against its own
  * binding even while the transaction is open.
  * </p>

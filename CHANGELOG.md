@@ -3,10 +3,9 @@
 #### Version 2.4.0 (TBD)
 * **Added `@ExcludeFromSaveGraph` to stop a save at a link.** A save follows every link it can reach, so it visits and may write the whole reachable graph. Annotate a field with `@ExcludeFromSaveGraph` and a save writes the field's link values without going any further. ([GH-210](https://github.com/cinchapi/runway/issues/210))
     * The record behind the link is neither read nor written by the save, so it does not join the save's conflict footprint. A `save(true)` no longer fails because another writer changed it, and a save no longer fails because a concurrent save left it holding no data.
-    * The record behind the link does not join the scope that saves or creates the holder, so it keeps the binding it had and a `Transaction` that saves the holder takes no ownership of it. Another scope may save or delete it while that transaction is open. A record passed as a `create` argument into an annotated field also keeps the binding it had, so a later save of it commits on its own rather than with the transaction.
-    * The annotation bounds what a save takes on its own, not what the caller reads. A record loaded through a `Transaction` is bound to it and joins its conflict footprint, whichever field the load reached it through.
     * A save no longer creates a record it reaches only through an annotated field. An unsaved record there becomes a link to a record that does not exist unless the caller saves it.
     * The exclusion belongs to the field. A save that reaches the same record through an unannotated field writes it there.
+    * Binding is unaffected. A `Transaction` that saves, creates or loads the holder owns the record behind an annotated link the same as any other, so a save of that record stages within the transaction.
     * Loading, `@CascadeDelete`, `@JoinDelete`, `@CaptureDelete` and reference repair reach through an annotated field as they do an ordinary one.
 
 #### Version 2.3.0 (September 1, 2026)
