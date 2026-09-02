@@ -257,9 +257,11 @@ public class Response extends Record {
 }
 ```
 
-The link is still written, so the `Response` records which `Prompt` it answers, and a load still resolves it. What changes is everything behind the link: the `Prompt` is neither read nor written by the save, it does not join the save's conflict footprint, and an open `Transaction` does not take ownership of it.
+The link is still written, so the `Response` records which `Prompt` it answers, and a load still resolves it. What changes is everything behind the link: the `Prompt` is neither read nor written by the save, it does not join the save's conflict footprint, and a `Transaction` that saves the `Response` takes no ownership of the `Prompt`.
 
 The one caveat: a save no longer creates a record it reaches only through such a field. Save the referenced record yourself, or the link points at a record that does not exist.
+
+The annotation bounds what a save takes on its own, not what you read. A `Prompt` you load through a `Transaction` is bound to that transaction and joins its conflict footprint, whichever field the load reached it through.
 
 Loading, `@CascadeDelete`, `@JoinDelete` and `@CaptureDelete` reach through the field as they always did.
 

@@ -514,6 +514,48 @@ public class ExcludeFromSaveGraphTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a {@link Transaction} binds a
+     * {@link Record} it loads through an {@link ExcludeFromSaveGraph} field,
+     * because the exclusion bounds what a save takes on its own rather than
+     * what the caller reads.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Holder} whose excluded field
+     * links a saved {@link Referenced}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} and load the {@link Holder} through
+     * it.</li>
+     * <li>Change the {@link Referenced} the load resolved and save it through
+     * the {@link Runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link Runway} save is refused with an
+     * {@link IllegalStateException}, because the {@link Transaction} owns
+     * everything it loaded.
+     */
+    @Test
+    public void testTransactionLoadClaimsRecordBehindExcludedField() {
+        Referenced referenced = new Referenced();
+        referenced.label = "original";
+        Holder holder = new Holder(referenced);
+        holder.name = "first";
+        Assert.assertTrue(runway.save(holder, referenced));
+
+        try (Transaction transaction = runway.startTransaction()) {
+            Holder loaded = transaction.load(Holder.class, holder.id());
+            loaded.excluded.label = "changed";
+            try {
+                runway.save(loaded.excluded);
+                Assert.fail("Expected IllegalStateException");
+            }
+            catch (IllegalStateException e) {
+                Assert.assertTrue(e.getMessage().contains("Transaction"));
+            }
+        }
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a load resolves a {@link Record}
      * through an {@link ExcludeFromSaveGraph} field.
      * <p>

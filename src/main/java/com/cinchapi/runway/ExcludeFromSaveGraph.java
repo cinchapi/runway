@@ -46,11 +46,10 @@ import java.lang.annotation.Target;
  * <p>
  * An excluded {@link Record} does not join the scope that saves or
  * {@link DatabaseInterface#create(Class, Object...) creates} the declaring
- * {@link Record}, so an open {@link Transaction} does not take exclusive
- * ownership of it. Another scope may save or delete it while the
- * {@link Transaction} is open, and its reads resolve outside the
- * {@link Transaction} rather than joining that {@link Transaction
- * Transaction's} conflict footprint.
+ * {@link Record}, so it keeps the binding it holds and an open
+ * {@link Transaction} that saves the declaring {@link Record} takes no
+ * ownership of it. Another scope may save or delete it while that
+ * {@link Transaction} is open.
  * </p>
  * <p>
  * <strong>NOTE:</strong> A {@link Record} passed as a
@@ -58,6 +57,12 @@ import java.lang.annotation.Target;
  * in an annotated field is bound to the scope it already had, so a later
  * {@link Record#save() save} of it commits on its own rather than with the
  * creating {@link Transaction}.
+ * </p>
+ * <p>
+ * <strong>NOTE:</strong> A load reaches through an annotated field, so a
+ * {@link Record} that a {@link Transaction} loads is bound to it and joins its
+ * conflict footprint, however the load reached it. The exclusion bounds what a
+ * save takes on its own; it does not bound what the caller reads.
  * </p>
  * <h2>Precondition</h2>
  * <p>
