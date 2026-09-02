@@ -802,13 +802,15 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return {@code true} if the save graph of the {@link Record} that declares
-     * {@code field} crosses it.
+     * {@code field} crosses it. A transient field and a field marked
+     * {@link ExcludeFromSaveGraph} are both outside the save graph.
      *
      * @param field the {@link Field} to check
      * @return {@code true} if the save graph crosses {@code field}
      */
     private static boolean isIncludedInSaveGraph(Field field) {
-        return !field.isAnnotationPresent(ExcludeFromSaveGraph.class);
+        return !Modifier.isTransient(field.getModifiers())
+                && !field.isAnnotationPresent(ExcludeFromSaveGraph.class);
     }
 
     /**
@@ -3657,8 +3659,7 @@ public abstract class Record implements Comparable<Record> {
             // Record's persistent data, so a reference it holds does not save
             // with the Record.
             for (Field field : fields()) {
-                if(!Modifier.isTransient(field.getModifiers())
-                        && isIncludedInSaveGraph(field)) {
+                if(isIncludedInSaveGraph(field)) {
                     Object value = getFieldValue(field, this);
                     saveModifiedReferenceWithinTransaction(value, saver,
                             context);
@@ -4148,9 +4149,7 @@ public abstract class Record implements Comparable<Record> {
      */
     private void collectGraph(Set<Record> graph, Set<Record> seen) {
         if(!seen.contains(this) && graph.add(this)) {
-            fields().stream()
-                    .filter(field -> !Modifier.isTransient(field.getModifiers())
-                            && isIncludedInSaveGraph(field))
+            fields().stream().filter(Record::isIncludedInSaveGraph)
                     .map(field -> Reflection.get(field.getName(), this))
                     .forEach(value -> forEachReachableRecord(value,
                             record -> record.collectGraph(graph, seen)));
