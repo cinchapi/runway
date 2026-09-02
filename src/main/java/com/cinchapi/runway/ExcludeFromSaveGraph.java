@@ -28,8 +28,8 @@ import java.lang.annotation.Target;
  * A {@link Record#save() save} writes the field's link values, so the declaring
  * {@link Record} still records which {@link Record Records} the field points
  * at, and a load still resolves them. The excluded {@link Record Records}
- * themselves are neither read nor written by that save, and they do not join
- * its conflict footprint.
+ * themselves are neither read nor written by that save, so the save does not
+ * check them for staleness or existence.
  * </p>
  * <p>
  * A save that reaches one of those {@link Record Records} through an
@@ -37,8 +37,11 @@ import java.lang.annotation.Target;
  * </p>
  * <p>
  * The exclusion governs the save graph only. Loading, {@link CascadeDelete},
- * {@link JoinDelete}, {@link CaptureDelete} and reference repair reach an
- * excluded {@link Record} as they do an ordinary one.
+ * {@link JoinDelete}, {@link CaptureDelete}, reference repair and the binding
+ * that scopes a {@link Record} to a {@link Runway} or {@link Transaction} reach
+ * an excluded {@link Record} as they do an ordinary one. A save through a
+ * {@link Transaction} therefore binds the excluded {@link Record} to that
+ * {@link Transaction}, even though it does not write it.
  * </p>
  * <p>
  * <strong>NOTE:</strong> A save does not create a {@link Record} it reaches
