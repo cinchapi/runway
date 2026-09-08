@@ -4462,7 +4462,9 @@ public abstract class Record implements Comparable<Record> {
      *         field cannot hold {@code value}
      */
     private Object conform(String key, Object value) {
-        Field field = value instanceof Collection ? declaredField(key) : null;
+        Field field = value instanceof Collection
+                ? Reflection.getDeclaredField(key, this)
+                : null;
         if(field != null && Collection.class.isAssignableFrom(field.getType())
                 && !field.getType().isInstance(value)) {
             Collection<Object> conformed = newCollectionFor(field.getType());
@@ -4472,33 +4474,6 @@ public abstract class Record implements Comparable<Record> {
         else {
             return value;
         }
-    }
-
-    /**
-     * Return the {@link Field} named {@code key} that an assignment to this
-     * {@link Record} writes.
-     * <p>
-     * A declaration in this {@link Record Record's} own class hides a
-     * declaration of the same name in a parent.
-     * </p>
-     *
-     * @param key the name of the field
-     * @return the {@link Field}, or {@code null} if no class in the hierarchy
-     *         declares {@code key}
-     */
-    @Nullable
-    private Field declaredField(String key) {
-        Field field = null;
-        Class<?> clazz = getClass();
-        while (clazz != null && field == null) {
-            try {
-                field = clazz.getDeclaredField(key);
-            }
-            catch (NoSuchFieldException e) {
-                clazz = clazz.getSuperclass();
-            }
-        }
-        return field;
     }
 
     /**
