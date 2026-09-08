@@ -149,8 +149,13 @@ public class GH212 extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that a dynamic write to a field name a
+     * <strong>Goal:</strong> Verify that a dynamic write to a field name that a
      * subclass redeclares stores the value under the subclass declaration.
+     * <p>
+     * <strong>NOTE:</strong> A save and a load resolve a shadowed field name to
+     * the parent declaration, so a {@link Redeclared} never round trips
+     * (<a href="https://github.com/cinchapi/runway/issues/215">GH-215</a>).
+     * This test covers the write alone.
      * <p>
      * <strong>Start state:</strong> An unsaved {@link Redeclared} whose
      * {@code values} field is declared as a {@link List}, over a parent that
@@ -173,6 +178,32 @@ public class GH212 extends RunwayBaseClientServerTest {
         List<String> values = Lists.newArrayList("a");
         record.set("values", values);
         Assert.assertSame(values, record.values);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Collection} written under a
+     * key that names no field is still stored as a dynamic attribute.
+     * <p>
+     * <strong>Start state:</strong> An unsaved {@link Container}, which
+     * declares no field named {@code extras}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build an {@link java.util.ArrayList ArrayList} that holds two
+     * elements.</li>
+     * <li>Call {@link Record#set(String, Object)} with the key {@code extras}
+     * and that list.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@link Record#get(String)} returns the
+     * identical instance the caller supplied.
+     */
+    @Test
+    public void testSetStoresCollectionUnderAKeyThatNamesNoField() {
+        Container container = new Container();
+        List<String> values = Lists.newArrayList("a", "b");
+        container.set("extras", values);
+        Assert.assertSame(values, container.get("extras"));
     }
 
     /**
