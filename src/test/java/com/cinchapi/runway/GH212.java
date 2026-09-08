@@ -24,6 +24,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 
 /**
  * Regression tests for
@@ -88,6 +89,33 @@ public class GH212 extends RunwayBaseClientServerTest {
         List<String> values = Lists.newArrayList("a");
         container.set("plain", values);
         Assert.assertSame(values, container.plain);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a dynamic write of a {@link Set} to a
+     * field declared as a {@link List} converts the value instead of failing
+     * the write.
+     * <p>
+     * <strong>Start state:</strong> An unsaved {@link Container} whose
+     * {@code plain} field is declared as a {@link List}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link java.util.LinkedHashSet LinkedHashSet} that holds two
+     * elements.</li>
+     * <li>Call {@link Record#set(String, Object)} with the key {@code plain}
+     * and that set.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The field holds a {@link List} with the same
+     * elements in the same order.
+     */
+    @Test
+    public void testSetConvertsSetToDeclaredListField() {
+        Container container = new Container();
+        container.set("plain",
+                Sets.newLinkedHashSet(Lists.newArrayList("a", "b")));
+        Assert.assertEquals(Lists.newArrayList("a", "b"), container.plain);
     }
 
     /**
