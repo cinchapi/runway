@@ -2560,6 +2560,13 @@ public abstract class Record implements Comparable<Record> {
      * through this {@link Record Record's} binding immediately, and only if
      * this {@link Record Record's} view of {@code key} is still current.
      * </p>
+     * <p>
+     * A {@link Collection} value that does not satisfy the declared type of the
+     * field named {@code key} is copied into that type, so the field holds the
+     * same type however its value arrived. A value that already satisfies the
+     * declared type is stored as supplied, which means the caller and this
+     * {@link Record} continue to share it.
+     * </p>
      *
      * @param key the key name
      * @param value the value to set
@@ -2573,7 +2580,7 @@ public abstract class Record implements Comparable<Record> {
         }
         else {
             try {
-                Reflection.set(key, value, this);
+                Reflection.set(key, conform(key, value), this);
             }
             catch (Exception e) {
                 Set<String> intrinsic = StaticAnalysis.instance()
@@ -4443,6 +4450,45 @@ public abstract class Record implements Comparable<Record> {
                     }
                 }
             });
+        }
+    }
+
+    /**
+     * Return the value to assign to the field named {@code key} so that the
+     * assignment satisfies that field's declared type.
+     * <p>
+     * A {@link Collection} value is copied into a new instance of the declared
+     * type when it is not already an instance of that type. Every other value
+     * is returned unchanged.
+     * </p>
+     *
+     * @param key the name of the field that is written
+     * @param value the value the caller supplied
+     * @return the value to assign to the field
+     */
+    private Object conform(String key, Object value) {
+        Field field;
+        try {
+            field = StaticAnalysis.instance().getField(this, key);
+        }
+        catch (IllegalArgumentException e) {
+            field = null;
+        }
+        if(field != null && value instanceof Collection
+                && Collection.class.isAssignableFrom(field.getType())
+                && !field.getType().isInstance(value)) {
+            // A load and a capture-delete cleanup each build the field's
+            // declared collection type, which means a dynamic write that
+            // assigned the caller's instance would leave the same field with
+            // a different type depending on how its value arrived. We copy
+            // into the declared type here, so a field declared by a concrete
+            // type keeps that type no matter which path wrote it.
+            Collection<Object> conformed = newCollectionFor(field.getType());
+            conformed.addAll((Collection<?>) value);
+            return conformed;
+        }
+        else {
+            return value;
         }
     }
 
