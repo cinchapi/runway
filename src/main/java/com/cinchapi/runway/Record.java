@@ -4213,6 +4213,30 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return the value to store under {@code key}.
+     *
+     * @param key the name of the field to write
+     * @param value the value the caller supplied
+     * @return {@code value}, or a {@link Collection} of the declared type of
+     *         the field named {@code key} holding the same elements when that
+     *         field cannot hold {@code value}
+     */
+    private Object conform(String key, Object value) {
+        Field field = value instanceof Collection
+                ? Reflection.getDeclaredField(key, this)
+                : null;
+        if(field != null && Collection.class.isAssignableFrom(field.getType())
+                && !field.getType().isInstance(value)) {
+            Collection<Object> conformed = newCollectionFor(field.getType());
+            conformed.addAll((Collection<?>) value);
+            return conformed;
+        }
+        else {
+            return value;
+        }
+    }
+
+    /**
      * Convert the {@code stored} value for {@code key} into the appropriate
      * Java object based on the field {@code type}.
      * <p>
@@ -4449,30 +4473,6 @@ public abstract class Record implements Comparable<Record> {
                     }
                 }
             });
-        }
-    }
-
-    /**
-     * Return the value to store under {@code key}.
-     *
-     * @param key the name of the field to write
-     * @param value the value the caller supplied
-     * @return {@code value}, or a {@link Collection} of the declared type of
-     *         the field named {@code key} holding the same elements when that
-     *         field cannot hold {@code value}
-     */
-    private Object conform(String key, Object value) {
-        Field field = value instanceof Collection
-                ? Reflection.getDeclaredField(key, this)
-                : null;
-        if(field != null && Collection.class.isAssignableFrom(field.getType())
-                && !field.getType().isInstance(value)) {
-            Collection<Object> conformed = newCollectionFor(field.getType());
-            conformed.addAll((Collection<?>) value);
-            return conformed;
-        }
-        else {
-            return value;
         }
     }
 
