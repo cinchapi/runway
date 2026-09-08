@@ -1,5 +1,16 @@
 # Changelog
 
+#### Version 2.4.0 (September 8, 2026)
+* **A dynamic write now conforms a `Collection` value to the field's declared type.** `Record#set` copies a `Collection` into the declared type of the field it writes when the supplied instance does not satisfy that type, so a field holds the same type whether its value arrived from a dynamic write, a load, or reference repair. ([GH-212](https://github.com/cinchapi/runway/issues/212))
+    * A field can now be declared by a concrete type, such as `CopyOnWriteArrayList`, and keep that type on every path.
+    * A value that already satisfies the declared type is stored as supplied, so the caller and the `Record` continue to share it.
+    * A `Collection` that the declared type does not accept previously failed the write with an `IllegalArgumentException`. It now converts, which matches the load path. A `Set` written to a `List` field is one such case.
+* **Added `@ExcludeFromSaveGraph` to stop a save from recursing into a linked `Record`.** By default, a save recursively saves every linked `Record` it can reach, so saving one record visits, and may write, the whole object graph behind it. Annotate a field with `@ExcludeFromSaveGraph` and a save writes that field's links but does not recurse into the records they point at. ([GH-210](https://github.com/cinchapi/runway/issues/210))
+    * Those linked records are neither read nor written, so they are not checked for staleness and do not widen the save's conflict footprint. A `save(true)` no longer fails because another writer changed one of them, and a save no longer fails because another save was concurrently writing one of them.
+    * A save no longer persists a `Record` it reaches only through an annotated field. The caller must save that `Record` itself; otherwise the stored link becomes a stale reference, which a later load handles under the governing `ReferenceNotFoundPolicy`.
+    * The annotation applies to the field, not to the records it points at. A save that reaches the same `Record` through an unannotated field still saves it there.
+    * This annotation has no effect on how loading, `@CascadeDelete`, `@JoinDelete`, `@CaptureDelete`, reference repair, and the binding that scopes a `Record` to a `Runway` or `Transaction` behave.
+
 #### Version 2.3.0 (September 1, 2026)
 Runway 2.3.0 makes concurrent work safe. A new Transaction API scopes any combination of reads and writes to one ACID transaction. Saves now write only what changed, and a save can verify the values a decision rests on. Atomic operations resolve records by their unique identity, and every `Audience`, including the anonymous one, is now a full database participant.
 
