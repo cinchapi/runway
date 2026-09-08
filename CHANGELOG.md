@@ -1,6 +1,6 @@
 # Changelog
 
-#### Version 2.4.0 (TBD)
+#### Version 2.4.0 (September 8, 2026)
 * **A dynamic write now conforms a `Collection` value to the field's declared type.** `Record#set` copies a `Collection` into the declared type of the field it writes when the supplied instance does not satisfy that type, so a field holds the same type whether its value arrived from a dynamic write, a load, or reference repair. ([GH-212](https://github.com/cinchapi/runway/issues/212))
     * A field can now be declared by a concrete type, such as `CopyOnWriteArrayList`, and keep that type on every path.
     * A value that already satisfies the declared type is stored as supplied, so the caller and the `Record` continue to share it.
