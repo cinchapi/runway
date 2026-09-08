@@ -2560,6 +2560,12 @@ public abstract class Record implements Comparable<Record> {
      * through this {@link Record Record's} binding immediately, and only if
      * this {@link Record Record's} view of {@code key} is still current.
      * </p>
+     * <p>
+     * A {@link Collection} the field named {@code key} cannot hold is stored as
+     * a {@link Collection} of that field's declared type with the same
+     * elements. A value the field can hold is stored as supplied, so the caller
+     * and this {@link Record} share it.
+     * </p>
      *
      * @param key the key name
      * @param value the value to set
@@ -2573,7 +2579,7 @@ public abstract class Record implements Comparable<Record> {
         }
         else {
             try {
-                Reflection.set(key, value, this);
+                Reflection.set(key, conform(key, value), this);
             }
             catch (Exception e) {
                 Set<String> intrinsic = StaticAnalysis.instance()
@@ -4204,6 +4210,30 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return Longs.compare(id(), record.id());
+    }
+
+    /**
+     * Return the value to store under {@code key}.
+     *
+     * @param key the name of the field to write
+     * @param value the value the caller supplied
+     * @return {@code value}, or a {@link Collection} of the declared type of
+     *         the field named {@code key} holding the same elements when that
+     *         field cannot hold {@code value}
+     */
+    private Object conform(String key, Object value) {
+        Field field = value instanceof Collection
+                ? Reflection.getDeclaredField(key, this)
+                : null;
+        if(field != null && Collection.class.isAssignableFrom(field.getType())
+                && !field.getType().isInstance(value)) {
+            Collection<Object> conformed = newCollectionFor(field.getType());
+            conformed.addAll((Collection<?>) value);
+            return conformed;
+        }
+        else {
+            return value;
+        }
     }
 
     /**
