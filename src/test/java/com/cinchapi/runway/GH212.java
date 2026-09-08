@@ -28,8 +28,7 @@ import com.google.common.collect.Lists;
 /**
  * Regression tests for
  * <a href="https://github.com/cinchapi/runway/issues/212">GH-212</a>: a dynamic
- * write must leave a field holding its declared {@link Collection} type, which
- * is the type every other write path builds.
+ * write must leave a field holding its declared {@link Collection} type.
  *
  * @author Jeff Nelson
  */
@@ -52,8 +51,7 @@ public class GH212 extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The field holds a {@link CopyOnWriteArrayList}
-     * with the same element. Before the fix, the write fails with an
-     * {@link IllegalArgumentException}.
+     * with the same element.
      */
     @Test
     public void testSetConformsCollectionToDeclaredConcreteType() {
@@ -123,9 +121,8 @@ public class GH212 extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that a dynamic write conforms to the
-     * declaration a subclass redeclares, which is the declaration the
-     * assignment writes.
+     * <strong>Goal:</strong> Verify that a dynamic write to a field name a
+     * subclass redeclares stores the value under the subclass declaration.
      * <p>
      * <strong>Start state:</strong> An unsaved {@link Redeclared} whose
      * {@code values} field is declared as a {@link List}, over a parent that
@@ -140,8 +137,7 @@ public class GH212 extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The subclass field holds the identical
-     * instance the caller supplied. Conforming to the parent declaration
-     * instead would fail the write with an {@link IllegalArgumentException}.
+     * instance the caller supplied.
      */
     @Test
     public void testSetConformsToTheDeclarationASubclassRedeclares() {
@@ -160,13 +156,12 @@ public class GH212 extends RunwayBaseClientServerTest {
     public static class Container extends Record {
 
         /**
-         * A field declared by a concrete type, which a caller chooses so that
-         * every path holds a thread-safe instance.
+         * A field declared by a concrete {@link Collection} type.
          */
         public CopyOnWriteArrayList<String> concurrent = new CopyOnWriteArrayList<>();
 
         /**
-         * A field declared by an interface, which any implementation satisfies.
+         * A field declared by a {@link Collection} interface.
          */
         public List<String> plain = Lists.newArrayList();
     }
@@ -194,7 +189,7 @@ public class GH212 extends RunwayBaseClientServerTest {
     public static class Redeclared extends Declared {
 
         /**
-         * The declaration that an assignment to this class writes.
+         * The redeclaration of {@link Declared#values}.
          */
         public List<String> values;
     }

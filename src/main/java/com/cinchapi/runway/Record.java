@@ -2561,11 +2561,10 @@ public abstract class Record implements Comparable<Record> {
      * this {@link Record Record's} view of {@code key} is still current.
      * </p>
      * <p>
-     * A {@link Collection} value that does not satisfy the declared type of the
-     * field named {@code key} is copied into that type, so the field holds the
-     * same type however its value arrived. A value that already satisfies the
-     * declared type is stored as supplied, which means the caller and this
-     * {@link Record} continue to share it.
+     * A {@link Collection} the field named {@code key} cannot hold is stored as
+     * a {@link Collection} of that field's declared type with the same
+     * elements. A value the field can hold is stored as supplied, so the caller
+     * and this {@link Record} share it.
      * </p>
      *
      * @param key the key name
@@ -4454,30 +4453,18 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the value to assign to the field named {@code key} so that the
-     * assignment satisfies that field's declared type.
-     * <p>
-     * A {@link Collection} value is copied into a new instance of the declared
-     * type when it is not already an instance of that type. Every other value
-     * is returned unchanged.
-     * </p>
+     * Return the value to store under {@code key}.
      *
-     * @param key the name of the field that is written
+     * @param key the name of the field to write
      * @param value the value the caller supplied
-     * @return the value to assign to the field
+     * @return {@code value}, or a {@link Collection} of the declared type of
+     *         the field named {@code key} holding the same elements when that
+     *         field cannot hold {@code value}
      */
     private Object conform(String key, Object value) {
-        // Only a collection can be conformed, so a scalar write pays nothing
-        // for the field lookup below.
         Field field = value instanceof Collection ? declaredField(key) : null;
         if(field != null && Collection.class.isAssignableFrom(field.getType())
                 && !field.getType().isInstance(value)) {
-            // A load and a capture-delete cleanup each build the field's
-            // declared collection type, which means a dynamic write that
-            // assigned the caller's instance would leave the same field with
-            // a different type depending on how its value arrived. We copy
-            // into the declared type here, so a field declared by a concrete
-            // type keeps that type no matter which path wrote it.
             Collection<Object> conformed = newCollectionFor(field.getType());
             conformed.addAll((Collection<?>) value);
             return conformed;
@@ -4489,16 +4476,15 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return the {@link Field} named {@code key} that an assignment to this
-     * {@link Record} writes, or {@code null} if this {@link Record} declares no
-     * such field.
+     * {@link Record} writes.
      * <p>
-     * The search starts at this {@link Record Record's} own class and moves up
-     * through its parents, so a field that a subclass redeclares resolves to
-     * the subclass declaration.
+     * A declaration in this {@link Record Record's} own class hides a
+     * declaration of the same name in a parent.
      * </p>
      *
      * @param key the name of the field
-     * @return the {@link Field}, or {@code null}
+     * @return the {@link Field}, or {@code null} if no class in the hierarchy
+     *         declares {@code key}
      */
     @Nullable
     private Field declaredField(String key) {
