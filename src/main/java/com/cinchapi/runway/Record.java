@@ -4467,15 +4467,10 @@ public abstract class Record implements Comparable<Record> {
      * @return the value to assign to the field
      */
     private Object conform(String key, Object value) {
-        Field field;
-        try {
-            field = StaticAnalysis.instance().getField(this, key);
-        }
-        catch (IllegalArgumentException e) {
-            field = null;
-        }
-        if(field != null && value instanceof Collection
-                && Collection.class.isAssignableFrom(field.getType())
+        // Only a collection can be conformed, so a scalar write pays nothing
+        // for the field lookup below.
+        Field field = value instanceof Collection ? declaredField(key) : null;
+        if(field != null && Collection.class.isAssignableFrom(field.getType())
                 && !field.getType().isInstance(value)) {
             // A load and a capture-delete cleanup each build the field's
             // declared collection type, which means a dynamic write that
@@ -4490,6 +4485,34 @@ public abstract class Record implements Comparable<Record> {
         else {
             return value;
         }
+    }
+
+    /**
+     * Return the {@link Field} named {@code key} that an assignment to this
+     * {@link Record} writes, or {@code null} if this {@link Record} declares no
+     * such field.
+     * <p>
+     * The search starts at this {@link Record Record's} own class and moves up
+     * through its parents, so a field that a subclass redeclares resolves to
+     * the subclass declaration.
+     * </p>
+     *
+     * @param key the name of the field
+     * @return the {@link Field}, or {@code null}
+     */
+    @Nullable
+    private Field declaredField(String key) {
+        Field field = null;
+        Class<?> clazz = getClass();
+        while (clazz != null && field == null) {
+            try {
+                field = clazz.getDeclaredField(key);
+            }
+            catch (NoSuchFieldException e) {
+                clazz = clazz.getSuperclass();
+            }
+        }
+        return field;
     }
 
     /**

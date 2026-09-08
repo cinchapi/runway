@@ -17,6 +17,7 @@ package com.cinchapi.runway;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.junit.Assert;
@@ -122,6 +123,35 @@ public class GH212 extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a dynamic write conforms to the
+     * declaration a subclass redeclares, which is the declaration the
+     * assignment writes.
+     * <p>
+     * <strong>Start state:</strong> An unsaved {@link Redeclared} whose
+     * {@code values} field is declared as a {@link List}, over a parent that
+     * declares {@code values} as a {@link Set}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build an {@link java.util.ArrayList ArrayList} that holds one
+     * element.</li>
+     * <li>Call {@link Record#set(String, Object)} with the key {@code values}
+     * and that list.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The subclass field holds the identical
+     * instance the caller supplied. Conforming to the parent declaration
+     * instead would fail the write with an {@link IllegalArgumentException}.
+     */
+    @Test
+    public void testSetConformsToTheDeclarationASubclassRedeclares() {
+        Redeclared record = new Redeclared();
+        List<String> values = Lists.newArrayList("a");
+        record.set("values", values);
+        Assert.assertSame(values, record.values);
+    }
+
+    /**
      * A {@link Record} that declares one {@link Collection} field by a concrete
      * type and another by an interface.
      *
@@ -139,6 +169,34 @@ public class GH212 extends RunwayBaseClientServerTest {
          * A field declared by an interface, which any implementation satisfies.
          */
         public List<String> plain = Lists.newArrayList();
+    }
+
+    /**
+     * A {@link Record} that declares a {@link Collection} field which
+     * {@link Redeclared} redeclares by a different type.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Declared extends Record {
+
+        /**
+         * A field that a subclass redeclares.
+         */
+        public Set<String> values;
+    }
+
+    /**
+     * A {@link Record} that redeclares a field of its parent by a different
+     * {@link Collection} type.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Redeclared extends Declared {
+
+        /**
+         * The declaration that an assignment to this class writes.
+         */
+        public List<String> values;
     }
 
 }
