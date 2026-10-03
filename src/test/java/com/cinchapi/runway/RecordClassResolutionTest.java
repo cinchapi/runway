@@ -33,7 +33,7 @@ public class RecordClassResolutionTest {
 
     /**
      * <strong>Goal:</strong> Verify that every {@link Record} class the startup
-     * scan found resolves from its name to the scanned {@link Class} object.
+     * scan found resolves from its name without error.
      * <p>
      * <strong>Start state:</strong> The {@link StaticAnalysis} singleton has
      * scanned the test classpath.

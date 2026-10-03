@@ -4074,22 +4074,24 @@ public abstract class Record implements Comparable<Record> {
             String message = "Record " + id + " is not a valid Runway record";
             throw new InvalidRecordException(message);
         }
-        Class<?> stored = getClass();
-        if(!section.equals(__)) {
-            try {
-                stored = StaticAnalysis.instance().getRecordClass(section);
+        else {
+            Class<?> stored = getClass();
+            if(!section.equals(__)) {
+                try {
+                    stored = StaticAnalysis.instance().getRecordClass(section);
+                }
+                catch (RuntimeException e) {
+                    inViolation = true;
+                    throw e;
+                }
             }
-            catch (RuntimeException e) {
+            if(!getClass().isAssignableFrom(stored)) {
                 inViolation = true;
-                throw e;
+                String message = AnyStrings
+                        .format("Cannot load a record from section {} "
+                                + "into a Record of type {}", section, __);
+                throw new InvalidSectionException(message);
             }
-        }
-        if(!getClass().isAssignableFrom(stored)) {
-            inViolation = true;
-            String message = AnyStrings
-                    .format("Cannot load a record from section {} "
-                            + "into a Record of type {}", section, __);
-            throw new InvalidSectionException(message);
         }
     }
 
@@ -6802,11 +6804,6 @@ public abstract class Record implements Comparable<Record> {
 
         /**
          * Return the {@link Record} class called {@code name}.
-         * <p>
-         * A class that the startup scan found resolves without a class loader
-         * lookup. Any other name resolves through
-         * {@link Class#forName(String)}.
-         * </p>
          *
          * @param name the fully qualified class name
          * @return the {@link Record} class
