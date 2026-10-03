@@ -3840,10 +3840,13 @@ public abstract class Record implements Comparable<Record> {
      * Return the computed properties of this {@link Record}, each mapped to a
      * {@link Supplier} that computes the property's value anew on every call.
      * <p>
-     * The result merges the properties from {@link #computed()} with those from
-     * each {@link Computed} method, in the order that
-     * {@link StaticAnalysis#getComputedMethods(Class)} returns the methods. A
-     * later method with the same key replaces an earlier one.
+     * The result holds the properties from {@link #computed()}, then those from
+     * each {@link Computed} method. The methods come in a fixed order: each
+     * default interface method that the class does not override, then each
+     * method declared in the class, then each method declared in each
+     * superclass. A later property with the same key replaces an earlier one. A
+     * call that fails leaves this {@link Record} with no computed properties,
+     * so the next call gathers them again.
      * </p>
      *
      * @return the computed properties
@@ -3852,44 +3855,55 @@ public abstract class Record implements Comparable<Record> {
      */
     private Map<String, Supplier<Object>> $computed() {
         if(computed == null) {
+            // The computed() hook may read this Record, and that read must see
+            // the properties gathered so far instead of starting the walk
+            // again.
             computed = new HashMap<>();
-            computed.putAll(computed());
-            StaticAnalysis.instance().getComputedMethods(getClass())
-                    .forEach(method -> {
-                        Computed annotation = method
-                                .getAnnotation(Computed.class);
-                        if(method.getParameterCount() == 0) {
-                            String key = annotation.value();
-                            if(key.isEmpty()) {
-                                key = method.getName();
-                            }
-                            Supplier<Object> supplier;
-                            if(method.isDefault()) {
-                                supplier = () -> Reflection
-                                        .invokeDefaultInterfaceMethod(this,
-                                                method);
+            try {
+                computed.putAll(computed());
+                StaticAnalysis.instance().getComputedMethods(getClass())
+                        .forEach(method -> {
+                            Computed annotation = method
+                                    .getAnnotation(Computed.class);
+                            if(method.getParameterCount() == 0) {
+                                String key = annotation.value();
+                                if(key.isEmpty()) {
+                                    key = method.getName();
+                                }
+                                Supplier<Object> supplier;
+                                if(method.isDefault()) {
+                                    supplier = () -> Reflection
+                                            .invokeDefaultInterfaceMethod(this,
+                                                    method);
+                                }
+                                else {
+                                    supplier = () -> {
+                                        try {
+                                            return method.invoke(this);
+                                        }
+                                        catch (ReflectiveOperationException e) {
+                                            throw CheckedExceptions
+                                                    .wrapAsRuntimeException(e);
+                                        }
+                                    };
+                                }
+                                computed.put(key, supplier);
                             }
                             else {
-                                supplier = () -> {
-                                    try {
-                                        return method.invoke(this);
-                                    }
-                                    catch (ReflectiveOperationException e) {
-                                        throw CheckedExceptions
-                                                .wrapAsRuntimeException(e);
-                                    }
-                                };
+                                throw new IllegalArgumentException(
+                                        "A method annotated with "
+                                                + annotation.annotationType()
+                                                        .getSimpleName()
+                                                + " cannot require parameters");
                             }
-                            computed.put(key, supplier);
-                        }
-                        else {
-                            throw new IllegalArgumentException(
-                                    "A method annotated with "
-                                            + annotation.annotationType()
-                                                    .getSimpleName()
-                                            + " cannot require parameters");
-                        }
-                    });
+                        });
+            }
+            catch (RuntimeException | Error e) {
+                // A later call must gather the properties again instead of
+                // returning the part gathered before the failure.
+                computed = null;
+                throw e;
+            }
         }
         return computed;
     }
@@ -3898,12 +3912,15 @@ public abstract class Record implements Comparable<Record> {
      * Return the derived properties of this {@link Record}, each mapped to its
      * value.
      * <p>
-     * The result merges the properties from {@link #derived()} with those from
-     * each {@link Derived} method, in the order that
-     * {@link StaticAnalysis#getDerivedMethods(Class)} returns the methods. A
-     * later method with the same key replaces an earlier one. Each
-     * {@link Derived} method runs once per {@link Record} instance, and later
-     * calls return the same values.
+     * The result holds the properties from {@link #derived()}, then those from
+     * each {@link Derived} method. The methods come in a fixed order: each
+     * default interface method that the class does not override, then each
+     * method declared in the class, then each method declared in each
+     * superclass. A later property with the same key replaces an earlier one.
+     * After a call succeeds, later calls return the same values without running
+     * the {@link Derived} methods again. A call that fails leaves this
+     * {@link Record} with no derived properties, so the next call gathers them
+     * again.
      * </p>
      *
      * @return the derived properties
@@ -3912,41 +3929,52 @@ public abstract class Record implements Comparable<Record> {
      */
     private Map<String, Object> $derived() {
         if(derived == null) {
+            // A Derived method may read this Record, and that read must see the
+            // properties gathered so far instead of starting the walk again.
             derived = new HashMap<>();
-            derived.putAll(derived());
-            StaticAnalysis.instance().getDerivedMethods(getClass())
-                    .forEach(method -> {
-                        Derived annotation = method
-                                .getAnnotation(Derived.class);
-                        if(method.getParameterCount() == 0) {
-                            String key = annotation.value();
-                            if(key.isEmpty()) {
-                                key = method.getName();
-                            }
-                            Object value;
-                            if(method.isDefault()) {
-                                value = Reflection.invokeDefaultInterfaceMethod(
-                                        this, method);
+            try {
+                derived.putAll(derived());
+                StaticAnalysis.instance().getDerivedMethods(getClass())
+                        .forEach(method -> {
+                            Derived annotation = method
+                                    .getAnnotation(Derived.class);
+                            if(method.getParameterCount() == 0) {
+                                String key = annotation.value();
+                                if(key.isEmpty()) {
+                                    key = method.getName();
+                                }
+                                Object value;
+                                if(method.isDefault()) {
+                                    value = Reflection
+                                            .invokeDefaultInterfaceMethod(this,
+                                                    method);
+                                }
+                                else {
+                                    try {
+                                        value = method.invoke(this);
+                                    }
+                                    catch (ReflectiveOperationException e) {
+                                        throw CheckedExceptions
+                                                .wrapAsRuntimeException(e);
+                                    }
+                                }
+                                derived.put(key, value);
                             }
                             else {
-                                try {
-                                    value = method.invoke(this);
-                                }
-                                catch (ReflectiveOperationException e) {
-                                    throw CheckedExceptions
-                                            .wrapAsRuntimeException(e);
-                                }
+                                throw new IllegalArgumentException(
+                                        "A method annotated with "
+                                                + annotation.annotationType()
+                                                        .getSimpleName()
+                                                + " cannot require parameters");
                             }
-                            derived.put(key, value);
-                        }
-                        else {
-                            throw new IllegalArgumentException(
-                                    "A method annotated with "
-                                            + annotation.annotationType()
-                                                    .getSimpleName()
-                                            + " cannot require parameters");
-                        }
-                    });
+                        });
+            }
+            catch (RuntimeException | Error e) {
+                // A later call must gather the properties again instead of
+                // returning the part gathered before the failure.
+                derived = null;
+                throw e;
+            }
         }
         return derived;
     }

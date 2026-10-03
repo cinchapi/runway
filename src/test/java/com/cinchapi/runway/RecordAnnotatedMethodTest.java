@@ -258,6 +258,28 @@ public class RecordAnnotatedMethodTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a {@link Derived} method can read its
+     * own {@link Record} through {@link Record#get(String)} while the
+     * {@link Record} gathers its derived properties.
+     * <p>
+     * <strong>Start state:</strong> A new {@link IdTagged}, whose {@code tag}
+     * method reads {@code id} with {@code get}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Read the {@code tag} key with {@code get}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The value is {@code "tag-"} followed by the
+     * {@link Record Record's} id.
+     */
+    @Test
+    public void testGetReadsDerivedValueThatReadsOwnRecord() {
+        IdTagged record = new IdTagged();
+        Assert.assertEquals("tag-" + record.id(), record.get("tag"));
+    }
+
+    /**
      * A type that supplies a default {@link Derived} value for the key
      * {@code label}.
      */
@@ -292,6 +314,30 @@ public class RecordAnnotatedMethodTest {
         @Derived("label")
         public String declaredLabel() {
             return "declared";
+        }
+    }
+
+    /**
+     * A {@link Record} with a {@link Derived} method that reads the
+     * {@link Record} itself.
+     */
+    static class IdTagged extends Record {
+
+        /**
+         * A field, because a {@link Record} without fields cannot read its own
+         * data. See
+         * <a href="https://github.com/cinchapi/runway/issues/225">GH-225</a>.
+         */
+        String name = "tagged";
+
+        /**
+         * Return a tag built from this {@link Record Record's} id.
+         *
+         * @return {@code "tag-"} followed by the id
+         */
+        @Derived
+        public String tag() {
+            return "tag-" + get("id");
         }
     }
 
