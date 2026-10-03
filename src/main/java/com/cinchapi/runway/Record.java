@@ -3837,101 +3837,144 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Gather all of the computed properties.
+     * Return the computed properties of this {@link Record}, each mapped to a
+     * {@link Supplier} that computes the property's value anew on every call.
+     * <p>
+     * The result holds the properties from {@link #computed()}, then those from
+     * each {@link Computed} method. The methods come in a fixed order: each
+     * default interface method that the class does not override, then each
+     * method declared in the class, then each method declared in each
+     * superclass. A later property with the same key replaces an earlier one. A
+     * call that fails leaves this {@link Record} with no computed properties,
+     * so the next call gathers them again.
+     * </p>
      *
-     * @return the computer properties
+     * @return the computed properties
+     * @throws IllegalArgumentException if a {@link Computed} method requires
+     *             parameters
      */
     private Map<String, Supplier<Object>> $computed() {
         if(computed == null) {
+            // The computed() hook may read this Record, and that read must see
+            // the properties gathered so far instead of starting the walk
+            // again.
             computed = new HashMap<>();
-            computed.putAll(computed());
-            Stream<Method> defaults = Arrays.stream(Reflection
-                    .getAllNonOverriddenDefaultInterfaceMethods(this));
-            Stream<Method> declareds = Arrays
-                    .stream(Reflection.getAllDeclaredMethods(this));
-            Stream.concat(defaults, declareds).forEach(method -> {
-                Computed annotation = method.getAnnotation(Computed.class);
-                if(annotation != null) {
-                    if(method.getParameterCount() == 0) {
-                        String key = annotation.value();
-                        if(key.isEmpty()) {
-                            key = method.getName();
-                        }
-                        Supplier<Object> supplier;
-                        if(method.isDefault()) {
-                            supplier = () -> Reflection
-                                    .invokeDefaultInterfaceMethod(this, method);
-                        }
-                        else {
-                            supplier = () -> {
-                                try {
-                                    return method.invoke(this);
+            try {
+                computed.putAll(computed());
+                StaticAnalysis.instance().getComputedMethods(getClass())
+                        .forEach(method -> {
+                            Computed annotation = method
+                                    .getAnnotation(Computed.class);
+                            if(method.getParameterCount() == 0) {
+                                String key = annotation.value();
+                                if(key.isEmpty()) {
+                                    key = method.getName();
                                 }
-                                catch (ReflectiveOperationException e) {
-                                    throw CheckedExceptions
-                                            .wrapAsRuntimeException(e);
+                                Supplier<Object> supplier;
+                                if(method.isDefault()) {
+                                    supplier = () -> Reflection
+                                            .invokeDefaultInterfaceMethod(this,
+                                                    method);
                                 }
-                            };
-                        }
-                        computed.put(key, supplier);
-                    }
-                    else {
-                        throw new IllegalArgumentException(
-                                "A method annotated with "
-                                        + annotation.getClass().getSimpleName()
-                                        + " cannot require parameters");
-                    }
-                }
-            });
+                                else {
+                                    supplier = () -> {
+                                        try {
+                                            return method.invoke(this);
+                                        }
+                                        catch (ReflectiveOperationException e) {
+                                            throw CheckedExceptions
+                                                    .wrapAsRuntimeException(e);
+                                        }
+                                    };
+                                }
+                                computed.put(key, supplier);
+                            }
+                            else {
+                                throw new IllegalArgumentException(
+                                        "A method annotated with "
+                                                + annotation.annotationType()
+                                                        .getSimpleName()
+                                                + " cannot require parameters");
+                            }
+                        });
+            }
+            catch (RuntimeException | Error e) {
+                // A later call must gather the properties again instead of
+                // returning the part gathered before the failure.
+                computed = null;
+                throw e;
+            }
         }
         return computed;
     }
 
     /**
-     * Gather all of the derived properties.
+     * Return the derived properties of this {@link Record}, each mapped to its
+     * value.
+     * <p>
+     * The result holds the properties from {@link #derived()}, then those from
+     * each {@link Derived} method. The methods come in a fixed order: each
+     * default interface method that the class does not override, then each
+     * method declared in the class, then each method declared in each
+     * superclass. A later property with the same key replaces an earlier one.
+     * After a call succeeds, later calls return the same values without running
+     * the {@link Derived} methods again. A call that fails leaves this
+     * {@link Record} with no derived properties, so the next call gathers them
+     * again.
+     * </p>
      *
-     * @return the computer properties
+     * @return the derived properties
+     * @throws IllegalArgumentException if a {@link Derived} method requires
+     *             parameters
      */
     private Map<String, Object> $derived() {
         if(derived == null) {
+            // A Derived method may read this Record, and that read must see the
+            // properties gathered so far instead of starting the walk again.
             derived = new HashMap<>();
-            derived.putAll(derived());
-            Stream<Method> defaults = Arrays.stream(Reflection
-                    .getAllNonOverriddenDefaultInterfaceMethods(this));
-            Stream<Method> declareds = Arrays
-                    .stream(Reflection.getAllDeclaredMethods(this));
-            Stream.concat(defaults, declareds).forEach(method -> {
-                Derived annotation = method.getAnnotation(Derived.class);
-                if(annotation != null) {
-                    if(method.getParameterCount() == 0) {
-                        String key = annotation.value();
-                        if(key.isEmpty()) {
-                            key = method.getName();
-                        }
-                        Object value;
-                        if(method.isDefault()) {
-                            value = Reflection
-                                    .invokeDefaultInterfaceMethod(this, method);
-                        }
-                        else {
-                            try {
-                                value = method.invoke(this);
+            try {
+                derived.putAll(derived());
+                StaticAnalysis.instance().getDerivedMethods(getClass())
+                        .forEach(method -> {
+                            Derived annotation = method
+                                    .getAnnotation(Derived.class);
+                            if(method.getParameterCount() == 0) {
+                                String key = annotation.value();
+                                if(key.isEmpty()) {
+                                    key = method.getName();
+                                }
+                                Object value;
+                                if(method.isDefault()) {
+                                    value = Reflection
+                                            .invokeDefaultInterfaceMethod(this,
+                                                    method);
+                                }
+                                else {
+                                    try {
+                                        value = method.invoke(this);
+                                    }
+                                    catch (ReflectiveOperationException e) {
+                                        throw CheckedExceptions
+                                                .wrapAsRuntimeException(e);
+                                    }
+                                }
+                                derived.put(key, value);
                             }
-                            catch (ReflectiveOperationException e) {
-                                throw CheckedExceptions
-                                        .wrapAsRuntimeException(e);
+                            else {
+                                throw new IllegalArgumentException(
+                                        "A method annotated with "
+                                                + annotation.annotationType()
+                                                        .getSimpleName()
+                                                + " cannot require parameters");
                             }
-                        }
-                        derived.put(key, value);
-                    }
-                    else {
-                        throw new IllegalArgumentException(
-                                "A method annotated with "
-                                        + annotation.getClass().getSimpleName()
-                                        + " cannot require parameters");
-                    }
-                }
-            });
+                        });
+            }
+            catch (RuntimeException | Error e) {
+                // A later call must gather the properties again instead of
+                // returning the part gathered before the failure.
+                derived = null;
+                throw e;
+            }
         }
         return derived;
     }
@@ -6206,6 +6249,28 @@ public abstract class Record implements Comparable<Record> {
         }
 
         /**
+         * Return the methods available to {@code clazz} that carry
+         * {@code annotation}, in the order that
+         * {@link #getComputedMethods(Class)} and
+         * {@link #getDerivedMethods(Class)} guarantee.
+         *
+         * @param clazz the {@link Record} class to inspect
+         * @param annotation the annotation that each returned method carries
+         * @return an unmodifiable {@link List} of the annotated methods
+         */
+        private static List<Method> findAnnotatedMethods(
+                Class<? extends Record> clazz,
+                Class<? extends Annotation> annotation) {
+            Stream<Method> defaults = Arrays.stream(Reflection
+                    .getAllNonOverriddenDefaultInterfaceMethods(clazz));
+            Stream<Method> declareds = Arrays
+                    .stream(Reflection.getAllDeclaredMethods(clazz));
+            return Stream.concat(defaults, declareds)
+                    .filter(method -> method.isAnnotationPresent(annotation))
+                    .collect(ImmutableList.toImmutableList());
+        }
+
+        /**
          * Return {@code true} if {@code clazz} has any descendants in its
          * hierarchy that have additional fields that are not defined in
          * {@code clazz}.
@@ -6454,6 +6519,20 @@ public abstract class Record implements Comparable<Record> {
         private final Map<Class<? extends Record>, Map<Class<? extends Record>, Set<String>>> captureDeleteFieldsByClass;
 
         /**
+         * A mapping from each {@link Record} class that
+         * {@link #getComputedMethods(Class)} has inspected to the result for
+         * that class.
+         */
+        private final Map<Class<? extends Record>, List<Method>> computedMethodsByClass;
+
+        /**
+         * A mapping from each {@link Record} class that
+         * {@link #getDerivedMethods(Class)} has inspected to the result for
+         * that class.
+         */
+        private final Map<Class<? extends Record>, List<Method>> derivedMethodsByClass;
+
+        /**
          * Construct a new instance.
          */
         private StaticAnalysis() {
@@ -6474,6 +6553,8 @@ public abstract class Record implements Comparable<Record> {
             this.joinDeleteFieldsByClass = new HashMap<>();
             this.captureDeleteFieldsByClass = new HashMap<>();
             this.classesByName = new HashMap<>();
+            this.computedMethodsByClass = new ConcurrentHashMap<>();
+            this.derivedMethodsByClass = new ConcurrentHashMap<>();
             Set<String> internalFieldNames = INTERNAL_FIELDS.keySet();
             reflection.getSubTypesOf(Record.class).forEach(type -> {
                 classesByName.put(type.getName(), type);
@@ -6954,6 +7035,44 @@ public abstract class Record implements Comparable<Record> {
         }
 
         /**
+         * Return the methods of {@code clazz} that are annotated with
+         * {@link Computed}.
+         * <p>
+         * The result lists each non-overridden default interface method
+         * available to {@code clazz}, followed by each method declared in
+         * {@code clazz} and then in each of its superclasses. It includes a
+         * method that requires parameters. Every call for the same
+         * {@code clazz} returns the same {@link List}.
+         * </p>
+         *
+         * @param clazz the {@link Record} class to inspect
+         * @return an unmodifiable {@link List} of the {@link Computed} methods
+         */
+        List<Method> getComputedMethods(Class<? extends Record> clazz) {
+            return getAnnotatedMethods(clazz, Computed.class,
+                    computedMethodsByClass);
+        }
+
+        /**
+         * Return the methods of {@code clazz} that are annotated with
+         * {@link Derived}.
+         * <p>
+         * The result lists each non-overridden default interface method
+         * available to {@code clazz}, followed by each method declared in
+         * {@code clazz} and then in each of its superclasses. It includes a
+         * method that requires parameters. Every call for the same
+         * {@code clazz} returns the same {@link List}.
+         * </p>
+         *
+         * @param clazz the {@link Record} class to inspect
+         * @return an unmodifiable {@link List} of the {@link Derived} methods
+         */
+        List<Method> getDerivedMethods(Class<? extends Record> clazz) {
+            return getAnnotatedMethods(clazz, Derived.class,
+                    derivedMethodsByClass);
+        }
+
+        /**
          * Return the {@link #getPaths(Class) paths} for {@code clazz} that name
          * a {@link DeferredReference} field.
          *
@@ -6970,6 +7089,29 @@ public abstract class Record implements Comparable<Record> {
                 }
             }
             return deferred;
+        }
+
+        /**
+         * Return the methods of {@code clazz} that carry {@code annotation},
+         * from {@code cache} when it holds them, or else from a new inspection
+         * of {@code clazz} that {@code cache} then retains.
+         *
+         * @param clazz the {@link Record} class to inspect
+         * @param annotation the annotation that each returned method carries
+         * @param cache the thread-safe cache of results for {@code annotation}
+         * @return an unmodifiable {@link List} of the annotated methods
+         */
+        private List<Method> getAnnotatedMethods(Class<? extends Record> clazz,
+                Class<? extends Annotation> annotation,
+                Map<Class<? extends Record>, List<Method>> cache) {
+            List<Method> methods = cache.get(clazz);
+            if(methods == null) {
+                // On Java 8, computeIfAbsent locks the bin even when the key is
+                // present, so a plain read serves every cached lookup.
+                methods = cache.computeIfAbsent(clazz,
+                        type -> findAnnotatedMethods(type, annotation));
+            }
+            return methods;
         }
 
         /**
