@@ -2,6 +2,7 @@
 
 #### Version 2.4.1 (TBD)
 * **Loading a record no longer pays for a class-loader lookup.** Runway resolves the class of a stored record from the `Record` types it finds at startup instead of calling `Class.forName` for each record. Every load, linked-record dereference, delete hook, and transactional load by id drops that per-record cost. ([GH-221](https://github.com/cinchapi/runway/issues/221))
+* **Reading a record's data no longer scans its class for `@Computed` and `@Derived` methods.** Runway finds a `Record` class's `@Computed` and `@Derived` methods once and reuses them for every instance of that class. `map()`, `json()`, and `get()` therefore no longer repeat a reflective scan of the class hierarchy for each record. ([GH-216](https://github.com/cinchapi/runway/issues/216))
 
 #### Version 2.4.0 (September 8, 2026)
 * **A dynamic write now conforms a `Collection` value to the field's declared type.** `Record#set` copies a `Collection` into the declared type of the field it writes when the supplied instance does not satisfy that type, so a field holds the same type whether its value arrived from a dynamic write, a load, or reference repair. ([GH-212](https://github.com/cinchapi/runway/issues/212))
