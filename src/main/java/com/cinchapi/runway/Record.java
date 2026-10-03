@@ -6491,14 +6491,16 @@ public abstract class Record implements Comparable<Record> {
         private final Map<Class<? extends Record>, Map<Class<? extends Record>, Set<String>>> captureDeleteFieldsByClass;
 
         /**
-         * A mapping from each {@link Record} class to the result of
-         * {@link #getComputedMethods(Class)} for that class.
+         * A mapping from each {@link Record} class that
+         * {@link #getComputedMethods(Class)} has inspected to the result for
+         * that class.
          */
         private final Map<Class<? extends Record>, List<Method>> computedMethodsByClass;
 
         /**
-         * A mapping from each {@link Record} class to the result of
-         * {@link #getDerivedMethods(Class)} for that class.
+         * A mapping from each {@link Record} class that
+         * {@link #getDerivedMethods(Class)} has inspected to the result for
+         * that class.
          */
         private final Map<Class<? extends Record>, List<Method>> derivedMethodsByClass;
 
@@ -6528,10 +6530,6 @@ public abstract class Record implements Comparable<Record> {
             Set<String> internalFieldNames = INTERNAL_FIELDS.keySet();
             reflection.getSubTypesOf(Record.class).forEach(type -> {
                 classesByName.put(type.getName(), type);
-                computedMethodsByClass.put(type,
-                        findAnnotatedMethods(type, Computed.class));
-                derivedMethodsByClass.put(type,
-                        findAnnotatedMethods(type, Derived.class));
                 // Build class hierarchy
                 hierarchies.put(type, type);
                 reflection.getSubTypesOf(type)
@@ -7016,8 +7014,7 @@ public abstract class Record implements Comparable<Record> {
          * available to {@code clazz}, followed by each method declared in
          * {@code clazz} and then in each of its superclasses. It includes a
          * method that requires parameters. Every call for the same
-         * {@code clazz} returns the same {@link List}, including for a class
-         * that the startup scan did not find.
+         * {@code clazz} returns the same {@link List}.
          * </p>
          *
          * @param clazz the {@link Record} class to inspect
@@ -7036,8 +7033,7 @@ public abstract class Record implements Comparable<Record> {
          * available to {@code clazz}, followed by each method declared in
          * {@code clazz} and then in each of its superclasses. It includes a
          * method that requires parameters. Every call for the same
-         * {@code clazz} returns the same {@link List}, including for a class
-         * that the startup scan did not find.
+         * {@code clazz} returns the same {@link List}.
          * </p>
          *
          * @param clazz the {@link Record} class to inspect
