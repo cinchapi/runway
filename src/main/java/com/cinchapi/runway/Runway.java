@@ -344,8 +344,8 @@ public final class Runway extends Binding implements
             return ImmutableSet.of();
         }
         else {
-            Class<? extends Record> clazz = Reflection
-                    .getClassCasted((String) Iterables.getLast(sections));
+            Class<? extends Record> clazz = StaticAnalysis.instance()
+                    .getRecordClass((String) Iterables.getLast(sections));
             return StaticAnalysis.instance().getDeferredReferencePaths(clazz);
         }
     }
@@ -2408,7 +2408,7 @@ public final class Runway extends Binding implements
                 Set<Object> sections = $data.get(Record.SECTION_KEY);
                 if(sections != null && !sections.isEmpty()) {
                     String section = (String) Iterables.getLast(sections);
-                    clazz = Reflection.getClassCasted(section);
+                    clazz = StaticAnalysis.instance().getRecordClass(section);
                 }
                 else if(Modifier.isAbstract(clazz.getModifiers())) {
                     // Without a section, an abstract clazz can never be
@@ -2553,7 +2553,8 @@ public final class Runway extends Binding implements
                 Set<Object> sections = recordData.get(Record.SECTION_KEY);
                 if(sections != null) {
                     String section = (String) Iterables.getLast(sections);
-                    Class actualClass = Reflection.getClassCasted(section);
+                    Class actualClass = StaticAnalysis.instance()
+                            .getRecordClass(section);
                     if(selection.clazz.isAssignableFrom(actualClass)) {
                         result = instantiate(actualClass, id, recordData, null,
                                 noTransaction);
@@ -2904,7 +2905,7 @@ public final class Runway extends Binding implements
             return null;
         }
         else {
-            Class<T> clazz = Reflection.getClassCasted(section);
+            Class<T> clazz = StaticAnalysis.instance().getRecordClass(section);
             return loadWithErrorHandling(clazz, id, loaded, transaction, data,
                     targets);
         }

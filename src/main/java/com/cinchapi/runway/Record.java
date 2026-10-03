@@ -4040,45 +4040,56 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Check to ensure that this Record does not violate any constraints. If so,
-     * throw an {@link IllegalStateException}.
+     * Check that the section stored for this {@link Record} names its own class
+     * or a descendant of it. A failed check marks this {@link Record} as in
+     * violation, so it can never be saved.
      *
-     * @param concourse
-     * @throws ConstraintViolationException
+     * @param concourse the connection that reads the section when {@code data}
+     *            is {@code null}
+     * @param data the pre-selected state of this {@link Record}, or
+     *            {@code null} to read the section from {@code concourse}
+     * @param prefix the key prefix under which {@code data} holds the section
+     * @throws InvalidRecordException if no section is stored
+     * @throws InvalidSectionException if the stored section names a class that
+     *             this {@link Record Record's} class cannot hold
+     * @throws RuntimeException if the stored section names no class; the cause
+     *             is a {@link ClassNotFoundException}
      */
     private void checkConstraints(Concourse concourse,
             @Nullable Map<String, Set<Object>> data, String prefix)
             throws ConstraintViolationException {
-        try {
-            String section = null;
-            if(data == null) {
-                section = concourse.get(SECTION_KEY, id);
-            }
-            else {
-                Set<Object> $$ = data.computeIfAbsent(prefix + SECTION_KEY,
-                        $ -> concourse.select(SECTION_KEY, id));
-                if(!$$.isEmpty()) {
-                    section = (String) Iterables.getLast($$);
-                }
-            }
-            if(section == null) {
-                inViolation = true;
-                String message = "Record " + id
-                        + " is not a valid Runway record";
-                throw new InvalidRecordException(message);
-            }
-            if(!(section.equals(__) || Class.forName(__)
-                    .isAssignableFrom(Class.forName(section)))) {
-                inViolation = true;
-                String message = AnyStrings
-                        .format("Cannot load a record from section {} "
-                                + "into a Record of type {}", section, __);
-                throw new InvalidSectionException(message);
+        String section = null;
+        if(data == null) {
+            section = concourse.get(SECTION_KEY, id);
+        }
+        else {
+            Set<Object> $$ = data.computeIfAbsent(prefix + SECTION_KEY,
+                    $ -> concourse.select(SECTION_KEY, id));
+            if(!$$.isEmpty()) {
+                section = (String) Iterables.getLast($$);
             }
         }
-        catch (ReflectiveOperationException e) {
+        if(section == null) {
             inViolation = true;
-            throw CheckedExceptions.wrapAsRuntimeException(e);
+            String message = "Record " + id + " is not a valid Runway record";
+            throw new InvalidRecordException(message);
+        }
+        Class<?> stored = getClass();
+        if(!section.equals(__)) {
+            try {
+                stored = StaticAnalysis.instance().getRecordClass(section);
+            }
+            catch (RuntimeException e) {
+                inViolation = true;
+                throw e;
+            }
+        }
+        if(!getClass().isAssignableFrom(stored)) {
+            inViolation = true;
+            String message = AnyStrings
+                    .format("Cannot load a record from section {} "
+                            + "into a Record of type {}", section, __);
+            throw new InvalidSectionException(message);
         }
     }
 
@@ -4430,8 +4441,8 @@ public abstract class Record implements Comparable<Record> {
                         // hook annotations.
                         String __ = (String) Iterables
                                 .getLast(entry.getValue());
-                        Class<? extends Record> clazz = Reflection
-                                .getClassCasted(__);
+                        Class<? extends Record> clazz = StaticAnalysis
+                                .instance().getRecordClass(__);
                         Record record = loadUsingSaverContext(saver, clazz, id);
                         ensureDeletion(record, context);
                     }
@@ -4458,8 +4469,8 @@ public abstract class Record implements Comparable<Record> {
                     if(!context.contains(id)) {
                         String __ = (String) Iterables
                                 .getLast(entry.getValue());
-                        Class<? extends Record> clazz = Reflection
-                                .getClassCasted(__);
+                        Class<? extends Record> clazz = StaticAnalysis
+                                .instance().getRecordClass(__);
                         Record record = loadUsingSaverContext(saver, clazz, id);
                         if(!record.removeCaptureDeleteReferences(
                                 ImmutableSet.of(this.id)).isEmpty()) {
@@ -4548,8 +4559,8 @@ public abstract class Record implements Comparable<Record> {
                 return null;
             }
             else {
-                Class<? extends Record> clazz = Reflection
-                        .getClassCasted(section);
+                Class<? extends Record> clazz = StaticAnalysis.instance()
+                        .getRecordClass(section);
                 return load(clazz, id, existing, connections, concourse,
                         binding, data, prefix.isEmpty() ? null : prefix,
                         targets);
@@ -6359,6 +6370,12 @@ public abstract class Record implements Comparable<Record> {
         private final Set<Class<? extends Record>> hasCollectionRecordFieldTypeByClassHierarchy;
 
         /**
+         * A mapping from the name of each {@link Record} class to the class
+         * itself.
+         */
+        private final Map<String, Class<? extends Record>> classesByName;
+
+        /**
          * A mapping from each {@link Record} class to itself and all of its
          * descendants. This facilitates querying across hierarchies.
          */
@@ -6454,8 +6471,10 @@ public abstract class Record implements Comparable<Record> {
             this.fieldAnnotationsByClass = new HashMap<>();
             this.joinDeleteFieldsByClass = new HashMap<>();
             this.captureDeleteFieldsByClass = new HashMap<>();
+            this.classesByName = new HashMap<>();
             Set<String> internalFieldNames = INTERNAL_FIELDS.keySet();
             reflection.getSubTypesOf(Record.class).forEach(type -> {
+                classesByName.put(type.getName(), type);
                 // Build class hierarchy
                 hierarchies.put(type, type);
                 reflection.getSubTypesOf(type)
@@ -6779,6 +6798,30 @@ public abstract class Record implements Comparable<Record> {
          */
         public Set<String> getPathsHierarchy(Class<? extends Record> clazz) {
             return pathsByClassHierarchy.get(clazz);
+        }
+
+        /**
+         * Return the {@link Record} class called {@code name}.
+         * <p>
+         * A class that the startup scan found resolves without a class loader
+         * lookup. Any other name resolves through
+         * {@link Class#forName(String)}.
+         * </p>
+         *
+         * @param name the fully qualified class name
+         * @return the {@link Record} class
+         * @throws RuntimeException if no class called {@code name} exists; the
+         *             cause is a {@link ClassNotFoundException}
+         */
+        @SuppressWarnings("unchecked")
+        public <T extends Record> Class<T> getRecordClass(String name) {
+            Class<? extends Record> clazz = classesByName.get(name);
+            if(clazz != null) {
+                return (Class<T>) clazz;
+            }
+            else {
+                return Reflection.getClassCasted(name);
+            }
         }
 
         /**
