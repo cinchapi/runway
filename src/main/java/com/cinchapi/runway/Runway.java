@@ -1780,19 +1780,6 @@ public final class Runway extends Binding implements
     }
 
     /**
-     * Return {@code true} if a delete listener is registered for {@code clazz}
-     * or one of its superclasses.
-     *
-     * @param clazz the {@link Record} class to test
-     * @return {@code true} if a delete listener receives the deletions of
-     *         {@code clazz}
-     */
-    final boolean hasDeleteListener(Class<? extends Record> clazz) {
-        return deleteListenerTypes.stream()
-                .anyMatch(type -> type.isAssignableFrom(clazz));
-    }
-
-    /**
      * Return the navigate paths for {@code clazz} and all descendants.
      *
      * @param clazz
@@ -1855,6 +1842,19 @@ public final class Runway extends Binding implements
                 && StaticAnalysis.instance().hasFieldOfTypeRecordInClass(clazz)
                         ? StaticAnalysis.instance().getPaths(clazz)
                         : null;
+    }
+
+    /**
+     * Return {@code true} if a delete listener is registered for {@code clazz}
+     * or one of its superclasses.
+     *
+     * @param clazz the {@link Record} class to test
+     * @return {@code true} if a delete listener receives the deletions of
+     *         {@code clazz}
+     */
+    final boolean hasDeleteListener(Class<? extends Record> clazz) {
+        return deleteListenerTypes.stream()
+                .anyMatch(type -> type.isAssignableFrom(clazz));
     }
 
     @Override
@@ -3603,25 +3603,6 @@ public final class Runway extends Binding implements
         }
 
         /**
-         * Set the {@link ReferenceNotFoundPolicy} for every field that declares
-         * no policy of its own.
-         * <p>
-         * The default is {@link ReferenceNotFoundPolicy#SKIP}, which skips a
-         * stale reference and leaves it in the database. Provide
-         * {@link ReferenceNotFoundPolicy#REPAIR} to also delete the stale
-         * reference, or {@link ReferenceNotFoundPolicy#ERROR} to fail the load
-         * of the housing record.
-         * </p>
-         *
-         * @param policy the {@link ReferenceNotFoundPolicy} to use
-         * @return this builder
-         */
-        public Builder referenceNotFoundPolicy(ReferenceNotFoundPolicy policy) {
-            this.referenceNotFoundPolicy = policy;
-            return this;
-        }
-
-        /**
          * Set the connection's environment.
          *
          * @param environment
@@ -3821,6 +3802,25 @@ public final class Runway extends Binding implements
         }
 
         /**
+         * Set the {@link ReferenceNotFoundPolicy} for every field that declares
+         * no policy of its own.
+         * <p>
+         * The default is {@link ReferenceNotFoundPolicy#SKIP}, which skips a
+         * stale reference and leaves it in the database. Provide
+         * {@link ReferenceNotFoundPolicy#REPAIR} to also delete the stale
+         * reference, or {@link ReferenceNotFoundPolicy#ERROR} to fail the load
+         * of the housing record.
+         * </p>
+         *
+         * @param policy the {@link ReferenceNotFoundPolicy} to use
+         * @return this builder
+         */
+        public Builder referenceNotFoundPolicy(ReferenceNotFoundPolicy policy) {
+            this.referenceNotFoundPolicy = policy;
+            return this;
+        }
+
+        /**
          * Set the {@link SpuriousSaveFailureStrategy} for the {@link Runway}
          * instance.
          * <p>
@@ -3885,16 +3885,6 @@ public final class Runway extends Binding implements
          */
         public DynamicWritePolicy dynamicWritePolicy() {
             return dynamicWritePolicy;
-        }
-
-        /**
-         * Return the {@link ReferenceNotFoundPolicy} for every field of an
-         * assigned {@link Record} that declares no policy of its own.
-         *
-         * @return the governing {@link ReferenceNotFoundPolicy}
-         */
-        public ReferenceNotFoundPolicy referenceNotFoundPolicy() {
-            return referenceNotFoundPolicy;
         }
 
         /**
@@ -4002,6 +3992,16 @@ public final class Runway extends Binding implements
          */
         public Properties onSave(Consumer<Record> listener) {
             return onSave(Record.class, listener);
+        }
+
+        /**
+         * Return the {@link ReferenceNotFoundPolicy} for every field of an
+         * assigned {@link Record} that declares no policy of its own.
+         *
+         * @return the governing {@link ReferenceNotFoundPolicy}
+         */
+        public ReferenceNotFoundPolicy referenceNotFoundPolicy() {
+            return referenceNotFoundPolicy;
         }
 
         /**
