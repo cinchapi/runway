@@ -215,11 +215,19 @@ public class RecordAnnotatedMethodTest {
      * <li>Read the {@code greeting} key with {@code get}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> An {@link IllegalArgumentException}.
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} whose
+     * message names {@link Derived}.
      */
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void testGetThrowsWhenDerivedMethodRequiresParameters() {
-        new DerivedWithParameter().get("greeting");
+        try {
+            new DerivedWithParameter().get("greeting");
+            Assert.fail();
+        }
+        catch (IllegalArgumentException e) {
+            Assert.assertTrue(e.getMessage(),
+                    e.getMessage().contains("annotated with Derived"));
+        }
     }
 
     /**
@@ -234,11 +242,19 @@ public class RecordAnnotatedMethodTest {
      * <li>Read the {@code greeting} key with {@code get}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> An {@link IllegalArgumentException}.
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} whose
+     * message names {@link Computed}.
      */
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void testGetThrowsWhenComputedMethodRequiresParameters() {
-        new ComputedWithParameter().get("greeting");
+        try {
+            new ComputedWithParameter().get("greeting");
+            Assert.fail();
+        }
+        catch (IllegalArgumentException e) {
+            Assert.assertTrue(e.getMessage(),
+                    e.getMessage().contains("annotated with Computed"));
+        }
     }
 
     /**
