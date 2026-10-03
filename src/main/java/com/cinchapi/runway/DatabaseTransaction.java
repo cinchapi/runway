@@ -38,6 +38,7 @@ import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.thrift.TransactionToken;
+import com.cinchapi.runway.Record.StaticAnalysis;
 import com.cinchapi.runway.db.BatchReader;
 import com.cinchapi.runway.db.BatchSaver;
 import com.cinchapi.runway.db.ConcourseProvider;
@@ -731,8 +732,8 @@ class DatabaseTransaction extends Binding implements Transaction {
         if(open) {
             return execute(() -> {
                 Set<Object> sections = concourse.select(Record.SECTION_KEY, id);
-                Class<T> clazz = Reflection
-                        .getClassCasted((String) Iterables.getLast(sections));
+                Class<T> clazz = StaticAnalysis.instance()
+                        .getRecordClass((String) Iterables.getLast(sections));
                 return load(clazz, id);
             });
         }
