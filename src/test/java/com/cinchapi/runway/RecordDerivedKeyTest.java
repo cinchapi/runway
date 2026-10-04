@@ -198,6 +198,185 @@ public class RecordDerivedKeyTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code map} runs a {@link Computed}
+     * method once for each call that includes its key.
+     * <p>
+     * <strong>Start state:</strong> A new {@link CountedComputed}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Read every key with {@code map}, with options that include computed
+     * values and leave out null values.</li>
+     * <li>Repeat the read.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The reads return {@code 1} and then {@code 2}
+     * for {@code c}.
+     */
+    @Test
+    public void testMapRunsComputedMethodOncePerCall() {
+        CountedComputed record = new CountedComputed();
+        SerializationOptions options = SerializationOptions.builder()
+                .includeComputedValuesByDefault(true).serializeNullValues(false)
+                .build();
+        Assert.assertEquals(1, record.map(options).get("c"));
+        Assert.assertEquals(2, record.map(options).get("c"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the {@link Derived} value of a key
+     * stands when the {@link Computed} value of the same key is absent.
+     * <p>
+     * <strong>Start state:</strong> A new {@link NullComputed}, whose
+     * {@link Computed} method for {@code value} returns {@code null} and whose
+     * {@link Derived} method for {@code value} returns {@code "derived"}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Read {@code value} with {@code get}.</li>
+     * <li>Read every key with {@code map}, which leaves out computed values by
+     * default.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both reads return {@code "derived"}.
+     */
+    @Test
+    public void testDerivedValueStandsWhenComputedValueIsAbsent() {
+        NullComputed record = new NullComputed();
+        Assert.assertEquals("derived", record.get("value"));
+        Assert.assertEquals("derived", record.map().get("value"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Derived} method that reads
+     * another derived key gets that key's value, whatever order the methods are
+     * declared in.
+     * <p>
+     * <strong>Start state:</strong> A new {@link CrossReading}, whose
+     * {@code first} method reads {@code second} and whose {@code second} method
+     * reads {@code third}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Read every key with {@code map}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code first} is {@code "first:second:third"}
+     * and {@code second} is {@code "second:third"}.
+     */
+    @Test
+    public void testDerivedMethodGetsTheValueOfAnotherDerivedKey() {
+        Map<String, Object> data = new CrossReading().map();
+        Assert.assertEquals("first:second:third", data.get("first"));
+        Assert.assertEquals("second:third", data.get("second"));
+    }
+
+    /**
+     * A {@link Record} whose {@link Derived} methods read one another.
+     */
+    static class CrossReading extends Record {
+
+        /**
+         * A field, because a {@link Record} without fields cannot read its own
+         * data. See
+         * <a href="https://github.com/cinchapi/runway/issues/225">GH-225</a>.
+         */
+        String name = "cross";
+
+        /**
+         * Return {@code "first:"} followed by the value of {@code second}.
+         *
+         * @return the value of {@code first}
+         */
+        @Derived
+        public String first() {
+            return "first:" + get("second");
+        }
+
+        /**
+         * Return {@code "second:"} followed by the value of {@code third}.
+         *
+         * @return the value of {@code second}
+         */
+        @Derived
+        public String second() {
+            return "second:" + get("third");
+        }
+
+        /**
+         * Return {@code "third"}.
+         *
+         * @return {@code "third"}
+         */
+        @Derived
+        public String third() {
+            return "third";
+        }
+    }
+
+    /**
+     * A {@link Record} whose {@link Computed} method for a key returns
+     * {@code null} while its {@link Derived} method for that key does not.
+     */
+    static class NullComputed extends Record {
+
+        /**
+         * A field, because a {@link Record} without fields cannot read its own
+         * data. See
+         * <a href="https://github.com/cinchapi/runway/issues/225">GH-225</a>.
+         */
+        String name = "null";
+
+        /**
+         * Return no computed value.
+         *
+         * @return {@code null}
+         */
+        @Computed("value")
+        public String computedValue() {
+            return null;
+        }
+
+        /**
+         * Return the derived value.
+         *
+         * @return {@code "derived"}
+         */
+        @Derived("value")
+        public String derivedValue() {
+            return "derived";
+        }
+    }
+
+    /**
+     * A {@link Record} with a {@link Computed} method that counts its runs.
+     */
+    static class CountedComputed extends Record {
+
+        /**
+         * A field, because a {@link Record} without fields cannot read its own
+         * data. See
+         * <a href="https://github.com/cinchapi/runway/issues/225">GH-225</a>.
+         */
+        String name = "computed";
+
+        /**
+         * The number of times {@link #c()} ran.
+         */
+        transient int cRuns;
+
+        /**
+         * Return the number of runs so far, including this one.
+         *
+         * @return the run count
+         */
+        @Computed
+        public int c() {
+            return ++cRuns;
+        }
+    }
+
+    /**
      * A {@link Record} with two {@link Derived} methods that count their runs.
      */
     static class Counted extends Record {

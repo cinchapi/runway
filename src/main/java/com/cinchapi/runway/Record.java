@@ -101,9 +101,9 @@ import com.cinchapi.runway.db.Saver;
 import com.cinchapi.runway.db.Saver.Timing;
 import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
-import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.util.KeySelection;
-import com.cinchapi.runway.util.LazyEntry;
+import com.cinchapi.runway.util.OnDemandMap;
+import com.cinchapi.runway.util.OnDemandMap.ComputedEntry;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
@@ -761,6 +761,30 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return the key of the property that {@code method} supplies.
+     *
+     * @param method a method annotated with {@code annotation}
+     * @param annotation {@link Computed} or {@link Derived}
+     * @return the annotation's value, or the method's name when that value is
+     *         empty
+     * @throws IllegalArgumentException if {@code method} requires parameters
+     */
+    private static String getPropertyKey(Method method,
+            Class<? extends Annotation> annotation) {
+        if(method.getParameterCount() == 0) {
+            String key = annotation == Computed.class
+                    ? method.getAnnotation(Computed.class).value()
+                    : method.getAnnotation(Derived.class).value();
+            return key.isEmpty() ? method.getName() : key;
+        }
+        else {
+            throw new IllegalArgumentException(
+                    "A method annotated with " + annotation.getSimpleName()
+                            + " cannot require parameters");
+        }
+    }
+
+    /**
      * Return {@code true} if the record identified by {@code id} is in a
      * "zombie" state meaning it exists in the database without any actual data.
      *
@@ -1302,16 +1326,16 @@ public abstract class Record implements Comparable<Record> {
     private transient Binding binding = null;
 
     /**
-     * A cache of the {@link #$computed() properties}.
+     * The {@link #$computed() computed properties}, or {@code null} before the
+     * first read of one.
      */
-    private transient Map<String, Supplier<Object>> computed = null;
+    private transient OnDemandMap<String, Object> computed = null;
 
     /**
-     * The value of each derived property of this {@link Record} that a read has
-     * resolved, keyed by property, or {@code null} before the first read of a
-     * derived property.
+     * The {@link #$derived() derived properties}, or {@code null} before the
+     * first read of one.
      */
-    private transient Map<String, Object> derived = null;
+    private transient OnDemandMap<String, Object> derived = null;
 
     /**
      * Per-instance cache for {@link #computeOnce(String, Supplier)} results.
@@ -2202,23 +2226,24 @@ public abstract class Record implements Comparable<Record> {
         List<String> exclude = selection.exclude();
         Predicate<Entry<String, Object>> filter = entry -> !exclude
                 .contains(entry.getKey());
-        if(!options.serializeNullValues()) {
-            filter = filter.and(entry -> entry.getValue() != null);
-        }
+        // A computed value is produced anew on each read, so the accumulator
+        // reads each value once and skips a null itself.
         BiConsumer<Map<String, Object>, Entry<String, Object>> accumulator = (
                 map, entry) -> {
             Object value = entry.getValue();
-            Collection<?> collection;
-            if(options.flattenSingleElementCollections()
-                    && value instanceof Collection
-                    && (collection = (Collection<?>) value).size() == 1) {
-                value = Iterables.getOnlyElement(collection);
-            }
-            if(value != null) {
-                map.merge(entry.getKey(), value, MergeStrategies::upsert);
-            }
-            else {
-                map.put(entry.getKey(), value);
+            if(value != null || options.serializeNullValues()) {
+                Collection<?> collection;
+                if(options.flattenSingleElementCollections()
+                        && value instanceof Collection
+                        && (collection = (Collection<?>) value).size() == 1) {
+                    value = Iterables.getOnlyElement(collection);
+                }
+                if(value != null) {
+                    map.merge(entry.getKey(), value, MergeStrategies::upsert);
+                }
+                else {
+                    map.put(entry.getKey(), value);
+                }
             }
         };
         Stream<Entry<String, Object>> pool;
@@ -3840,66 +3865,35 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the computed properties of this {@link Record}, each mapped to a
-     * {@link Supplier} that computes the property's value anew on every call.
+     * Return the computed properties of this {@link Record}.
      * <p>
      * The result holds the properties from {@link #computed()}, then those from
      * each {@link Computed} method. The methods come in a fixed order: each
      * default interface method that the class does not override, then each
      * method declared in the class, then each method declared in each
      * superclass. A later property with the same key replaces an earlier one. A
-     * call that fails leaves this {@link Record} with no computed properties,
-     * so the next call gathers them again.
+     * read of the result runs only the method behind the key it reads, anew on
+     * every read. A call that fails leaves this {@link Record} with no computed
+     * properties, so the next call gathers them again.
      * </p>
      *
      * @return the computed properties
      * @throws IllegalArgumentException if a {@link Computed} method requires
      *             parameters
      */
-    private Map<String, Supplier<Object>> $computed() {
+    private OnDemandMap<String, Object> $computed() {
         if(computed == null) {
             // The computed() hook may read this Record, and that read must see
             // the properties gathered so far instead of starting the walk
             // again.
-            computed = new HashMap<>();
+            computed = new OnDemandMap<>();
             try {
-                computed.putAll(computed());
-                StaticAnalysis.instance().getComputedMethods(getClass())
-                        .forEach(method -> {
-                            Computed annotation = method
-                                    .getAnnotation(Computed.class);
-                            if(method.getParameterCount() == 0) {
-                                String key = annotation.value();
-                                if(key.isEmpty()) {
-                                    key = method.getName();
-                                }
-                                Supplier<Object> supplier;
-                                if(method.isDefault()) {
-                                    supplier = () -> Reflection
-                                            .invokeDefaultInterfaceMethod(this,
-                                                    method);
-                                }
-                                else {
-                                    supplier = () -> {
-                                        try {
-                                            return method.invoke(this);
-                                        }
-                                        catch (ReflectiveOperationException e) {
-                                            throw CheckedExceptions
-                                                    .wrapAsRuntimeException(e);
-                                        }
-                                    };
-                                }
-                                computed.put(key, supplier);
-                            }
-                            else {
-                                throw new IllegalArgumentException(
-                                        "A method annotated with "
-                                                + annotation.annotationType()
-                                                        .getSimpleName()
-                                                + " cannot require parameters");
-                            }
-                        });
+                computed().forEach(computed::compute);
+                for (Method method : StaticAnalysis.instance()
+                        .getComputedMethods(getClass())) {
+                    computed.compute(getPropertyKey(method, Computed.class),
+                            () -> invokePropertyMethod(method));
+                }
             }
             catch (RuntimeException | Error e) {
                 // A later call must gather the properties again instead of
@@ -3909,6 +3903,47 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return computed;
+    }
+
+    /**
+     * Return the derived properties of this {@link Record}.
+     * <p>
+     * The result holds the properties from {@link #derived()}, then those from
+     * each {@link Derived} method. The methods come in a fixed order: each
+     * default interface method that the class does not override, then each
+     * method declared in the class, then each method declared in each
+     * superclass. A later property with the same key replaces an earlier one. A
+     * read of the result runs only the method behind the key it reads, and each
+     * method runs once: every later read returns the value it returned. A call
+     * that fails leaves this {@link Record} with no derived properties, so the
+     * next call gathers them again.
+     * </p>
+     *
+     * @return the derived properties
+     * @throws IllegalArgumentException if a {@link Derived} method requires
+     *             parameters
+     */
+    private OnDemandMap<String, Object> $derived() {
+        if(derived == null) {
+            // A Derived method may read this Record, and that read must see the
+            // properties gathered so far instead of starting the walk again.
+            derived = new OnDemandMap<>();
+            try {
+                derived().forEach(derived::put);
+                for (Method method : StaticAnalysis.instance()
+                        .getDerivedMethods(getClass())) {
+                    derived.derive(getPropertyKey(method, Derived.class),
+                            () -> invokePropertyMethod(method));
+                }
+            }
+            catch (RuntimeException | Error e) {
+                // A later call must gather the properties again instead of
+                // returning the part gathered before the failure.
+                derived = null;
+                throw e;
+            }
+        }
+        return derived;
     }
 
     /**
@@ -4305,53 +4340,8 @@ public abstract class Record implements Comparable<Record> {
      * @return the data in this {@link Record}
      */
     private Map<String, Object> data() {
-        // The #computed data must be wrapped in a special map that only
-        // computes the requested values on-demand.
-        Map<String, Object> computed = new AbstractMap<String, Object>() {
-
-            @Override
-            public Set<Entry<String, Object>> entrySet() {
-                return $computed().entrySet().stream().map(ComputedEntry::new)
-                        .collect(Collectors.toSet());
-            }
-
-            @Override
-            public Object get(Object key) {
-                Supplier<?> computer = $computed().get(key);
-                if(computer != null) {
-                    return computer.get();
-                }
-                else {
-                    return null;
-                }
-            }
-
-            @Override
-            public Set<String> keySet() {
-                return $computed().keySet();
-            }
-
-        };
-        // The derived data resolves each value when it is read, so a value
-        // that the caller excludes by its key is never derived.
-        Map<String, Object> derived = new AbstractMap<String, Object>() {
-
-            @Override
-            public Set<Entry<String, Object>> entrySet() {
-                return derivedKeys().stream()
-                        .map(key -> new LazyEntry<String, Object>(key,
-                                () -> derive(key)))
-                        .collect(Collectors.toSet());
-            }
-
-            @Override
-            public Object get(Object key) {
-                return derive((String) key);
-            }
-
-        };
         Map<String, Object> data = BackupReadSourcesHashMap
-                .create(ImmutableMap.of("id", id), derived, computed);
+                .create(ImmutableMap.of("id", id), $derived(), $computed());
         fields().forEach(field -> {
             try {
                 Object value;
@@ -4564,105 +4554,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the value of the derived property named {@code key}.
-     * <p>
-     * The value comes from the {@link Derived} method that supplies
-     * {@code key}, or else from {@link #derived()}. Each {@link Derived} method
-     * runs at most once for this {@link Record}: after it succeeds, every read
-     * returns the value it returned. A method that fails leaves no value, so
-     * the next read runs it again. While a method runs, a read of its own key
-     * returns {@code null}.
-     * </p>
-     *
-     * @param key the property's key
-     * @return the derived value, or {@code null} if nothing derives {@code key}
-     * @throws IllegalArgumentException if a {@link Derived} method of this
-     *             {@link Record Record's} class requires parameters
-     */
-    private Object derive(String key) {
-        Map<String, Method> methods = StaticAnalysis.instance()
-                .getDerivedMethodsByKey(getClass());
-        Map<String, Object> cache = derivedCache(methods);
-        Object value;
-        if(cache.containsKey(key)) {
-            value = cache.get(key);
-        }
-        else {
-            Method method = methods.get(key);
-            if(method != null) {
-                // A Derived method may read this Record, and a read of its own
-                // key must see no value instead of running the method again.
-                cache.put(key, null);
-                try {
-                    if(method.isDefault()) {
-                        value = Reflection.invokeDefaultInterfaceMethod(this,
-                                method);
-                    }
-                    else {
-                        value = method.invoke(this);
-                    }
-                }
-                catch (ReflectiveOperationException e) {
-                    cache.remove(key);
-                    throw CheckedExceptions.wrapAsRuntimeException(e);
-                }
-                catch (RuntimeException | Error e) {
-                    cache.remove(key);
-                    throw e;
-                }
-                cache.put(key, value);
-            }
-            else {
-                value = null;
-            }
-        }
-        return value;
-    }
-
-    /**
-     * Return the cache of derived values, which starts with each value from
-     * {@link #derived()} whose key no {@link Derived} method supplies.
-     *
-     * @param methods the {@link Derived} method for each key of this
-     *            {@link Record Record's} class
-     * @return the cache of derived values
-     */
-    private Map<String, Object> derivedCache(Map<String, Method> methods) {
-        if(derived == null) {
-            // The derived() hook may read this Record, and that read must see
-            // the cache instead of calling the hook again.
-            derived = new HashMap<>();
-            try {
-                derived().forEach((key, value) -> {
-                    if(!methods.containsKey(key)) {
-                        derived.put(key, value);
-                    }
-                });
-            }
-            catch (RuntimeException | Error e) {
-                derived = null;
-                throw e;
-            }
-        }
-        return derived;
-    }
-
-    /**
-     * Return every key that a {@link Derived} method or {@link #derived()}
-     * supplies for this {@link Record}.
-     *
-     * @return the derived keys
-     * @throws IllegalArgumentException if a {@link Derived} method of this
-     *             {@link Record Record's} class requires parameters
-     */
-    private Set<String> derivedKeys() {
-        Map<String, Method> methods = StaticAnalysis.instance()
-                .getDerivedMethodsByKey(getClass());
-        return Sets.union(methods.keySet(), derivedCache(methods).keySet())
-                .immutableCopy();
-    }
-
-    /**
      * Return the {@link DynamicWritePolicy} that governs
      * {@link #set(String, Object) dynamic writes} to this {@link Record}. If
      * this {@link Record} is not {@link #assign(Runway) assigned} to a
@@ -4806,13 +4697,10 @@ public abstract class Record implements Comparable<Record> {
                 catch (Exception e) {/* ignore */}
             }
             if(value == null) {
-                Supplier<?> computer = $computed().get(key);
-                if(computer != null) {
-                    value = computer.get();
-                }
+                value = $computed().get(key);
             }
             if(value == null) {
-                value = derive(key);
+                value = $derived().get(key);
             }
             if(value == null && key.equals("id")) {
                 value = id;
@@ -4904,6 +4792,28 @@ public abstract class Record implements Comparable<Record> {
         forEachSequenceDelta(ImmutableSet.copyOf(_realms), baseline(REALMS_KEY),
                 $ -> changed[0] = true, $ -> changed[0] = true);
         return changed[0];
+    }
+
+    /**
+     * Return the value that {@code method} produces for this {@link Record}.
+     *
+     * @param method a {@link Computed} or {@link Derived} method without
+     *            parameters that is available to this {@link Record Record's}
+     *            class
+     * @return the method's result
+     */
+    private Object invokePropertyMethod(Method method) {
+        if(method.isDefault()) {
+            return Reflection.invokeDefaultInterfaceMethod(this, method);
+        }
+        else {
+            try {
+                return method.invoke(this);
+            }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.wrapAsRuntimeException(e);
+            }
+        }
     }
 
     /**
@@ -6586,13 +6496,6 @@ public abstract class Record implements Comparable<Record> {
         private final Map<Class<? extends Record>, List<Method>> derivedMethodsByClass;
 
         /**
-         * A mapping from each {@link Record} class that
-         * {@link #getDerivedMethodsByKey(Class)} has inspected to the result
-         * for that class.
-         */
-        private final Map<Class<? extends Record>, Map<String, Method>> derivedMethodsByKeyByClass;
-
-        /**
          * Construct a new instance.
          */
         private StaticAnalysis() {
@@ -6615,7 +6518,6 @@ public abstract class Record implements Comparable<Record> {
             this.classesByName = new HashMap<>();
             this.computedMethodsByClass = new ConcurrentHashMap<>();
             this.derivedMethodsByClass = new ConcurrentHashMap<>();
-            this.derivedMethodsByKeyByClass = new ConcurrentHashMap<>();
             Set<String> internalFieldNames = INTERNAL_FIELDS.keySet();
             reflection.getSubTypesOf(Record.class).forEach(type -> {
                 classesByName.put(type.getName(), type);
@@ -7131,50 +7033,6 @@ public abstract class Record implements Comparable<Record> {
         List<Method> getDerivedMethods(Class<? extends Record> clazz) {
             return getAnnotatedMethods(clazz, Derived.class,
                     derivedMethodsByClass);
-        }
-
-        /**
-         * Return the {@link Derived} method that supplies each derived property
-         * of {@code clazz}, keyed by property.
-         * <p>
-         * When several methods supply one key, the result holds the last in the
-         * order that {@link #getDerivedMethods(Class)} guarantees. Every call
-         * for the same {@code clazz} returns the same {@link Map}.
-         * </p>
-         *
-         * @param clazz the {@link Record} class to inspect
-         * @return an unmodifiable {@link Map} from each derived key to its
-         *         method
-         * @throws IllegalArgumentException if a {@link Derived} method of
-         *             {@code clazz} requires parameters
-         */
-        Map<String, Method> getDerivedMethodsByKey(
-                Class<? extends Record> clazz) {
-            Map<String, Method> methods = derivedMethodsByKeyByClass.get(clazz);
-            if(methods == null) {
-                // On Java 8, computeIfAbsent locks the bin even when the key is
-                // present, so a plain read serves every cached lookup.
-                methods = derivedMethodsByKeyByClass.computeIfAbsent(clazz,
-                        type -> {
-                            Map<String, Method> byKey = new HashMap<>();
-                            for (Method method : getDerivedMethods(type)) {
-                                if(method.getParameterCount() == 0) {
-                                    String key = method
-                                            .getAnnotation(Derived.class)
-                                            .value();
-                                    byKey.put(key.isEmpty() ? method.getName()
-                                            : key, method);
-                                }
-                                else {
-                                    throw new IllegalArgumentException(
-                                            "A method annotated with Derived "
-                                                    + "cannot require parameters");
-                                }
-                            }
-                            return Collections.unmodifiableMap(byKey);
-                        });
-            }
-            return methods;
         }
 
         /**
