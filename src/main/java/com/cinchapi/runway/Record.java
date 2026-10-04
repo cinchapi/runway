@@ -1306,7 +1306,9 @@ public abstract class Record implements Comparable<Record> {
     private transient Map<String, Supplier<Object>> computed = null;
 
     /**
-     * A cache of the {@link #$derived() properties}.
+     * The value of each derived property of this {@link Record} that a read has
+     * resolved, keyed by property, or {@code null} before the first read of a
+     * derived property.
      */
     private transient Map<String, Object> derived = null;
 
@@ -3912,15 +3914,9 @@ public abstract class Record implements Comparable<Record> {
      * Return the derived properties of this {@link Record}, each mapped to its
      * value.
      * <p>
-     * The result holds the properties from {@link #derived()}, then those from
-     * each {@link Derived} method. The methods come in a fixed order: each
-     * default interface method that the class does not override, then each
-     * method declared in the class, then each method declared in each
-     * superclass. A later property with the same key replaces an earlier one.
-     * After a call succeeds, later calls return the same values without running
-     * the {@link Derived} methods again. A call that fails leaves this
-     * {@link Record} with no derived properties, so the next call gathers them
-     * again.
+     * The result holds each property that {@link #derive(String)} resolves: one
+     * for each key that a {@link Derived} method or {@link #derived()}
+     * supplies.
      * </p>
      *
      * @return the derived properties
@@ -3928,55 +3924,10 @@ public abstract class Record implements Comparable<Record> {
      *             parameters
      */
     private Map<String, Object> $derived() {
-        if(derived == null) {
-            // A Derived method may read this Record, and that read must see the
-            // properties gathered so far instead of starting the walk again.
-            derived = new HashMap<>();
-            try {
-                derived.putAll(derived());
-                StaticAnalysis.instance().getDerivedMethods(getClass())
-                        .forEach(method -> {
-                            Derived annotation = method
-                                    .getAnnotation(Derived.class);
-                            if(method.getParameterCount() == 0) {
-                                String key = annotation.value();
-                                if(key.isEmpty()) {
-                                    key = method.getName();
-                                }
-                                Object value;
-                                if(method.isDefault()) {
-                                    value = Reflection
-                                            .invokeDefaultInterfaceMethod(this,
-                                                    method);
-                                }
-                                else {
-                                    try {
-                                        value = method.invoke(this);
-                                    }
-                                    catch (ReflectiveOperationException e) {
-                                        throw CheckedExceptions
-                                                .wrapAsRuntimeException(e);
-                                    }
-                                }
-                                derived.put(key, value);
-                            }
-                            else {
-                                throw new IllegalArgumentException(
-                                        "A method annotated with "
-                                                + annotation.annotationType()
-                                                        .getSimpleName()
-                                                + " cannot require parameters");
-                            }
-                        });
-            }
-            catch (RuntimeException | Error e) {
-                // A later call must gather the properties again instead of
-                // returning the part gathered before the failure.
-                derived = null;
-                throw e;
-            }
-        }
-        return derived;
+        Map<String, Method> methods = StaticAnalysis.instance()
+                .getDerivedMethodsByKey(getClass());
+        methods.keySet().forEach(this::derive);
+        return derivedCache(methods);
     }
 
     /**
@@ -4614,6 +4565,90 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return the value of the derived property named {@code key}.
+     * <p>
+     * The value comes from the {@link Derived} method that supplies
+     * {@code key}, or else from {@link #derived()}. Each {@link Derived} method
+     * runs at most once for this {@link Record}: after it succeeds, every read
+     * returns the value it returned. A method that fails leaves no value, so
+     * the next read runs it again. While a method runs, a read of its own key
+     * returns {@code null}.
+     * </p>
+     *
+     * @param key the property's key
+     * @return the derived value, or {@code null} if nothing derives {@code key}
+     * @throws IllegalArgumentException if a {@link Derived} method of this
+     *             {@link Record Record's} class requires parameters
+     */
+    private Object derive(String key) {
+        Map<String, Method> methods = StaticAnalysis.instance()
+                .getDerivedMethodsByKey(getClass());
+        Map<String, Object> cache = derivedCache(methods);
+        Object value;
+        if(cache.containsKey(key)) {
+            value = cache.get(key);
+        }
+        else {
+            Method method = methods.get(key);
+            if(method != null) {
+                // A Derived method may read this Record, and a read of its own
+                // key must see no value instead of running the method again.
+                cache.put(key, null);
+                try {
+                    if(method.isDefault()) {
+                        value = Reflection.invokeDefaultInterfaceMethod(this,
+                                method);
+                    }
+                    else {
+                        value = method.invoke(this);
+                    }
+                }
+                catch (ReflectiveOperationException e) {
+                    cache.remove(key);
+                    throw CheckedExceptions.wrapAsRuntimeException(e);
+                }
+                catch (RuntimeException | Error e) {
+                    cache.remove(key);
+                    throw e;
+                }
+                cache.put(key, value);
+            }
+            else {
+                value = null;
+            }
+        }
+        return value;
+    }
+
+    /**
+     * Return the cache of derived values, which starts with each value from
+     * {@link #derived()} whose key no {@link Derived} method supplies.
+     *
+     * @param methods the {@link Derived} method for each key of this
+     *            {@link Record Record's} class
+     * @return the cache of derived values
+     */
+    private Map<String, Object> derivedCache(Map<String, Method> methods) {
+        if(derived == null) {
+            // The derived() hook may read this Record, and that read must see
+            // the cache instead of calling the hook again.
+            derived = new HashMap<>();
+            try {
+                derived().forEach((key, value) -> {
+                    if(!methods.containsKey(key)) {
+                        derived.put(key, value);
+                    }
+                });
+            }
+            catch (RuntimeException | Error e) {
+                derived = null;
+                throw e;
+            }
+        }
+        return derived;
+    }
+
+    /**
      * Return the {@link DynamicWritePolicy} that governs
      * {@link #set(String, Object) dynamic writes} to this {@link Record}. If
      * this {@link Record} is not {@link #assign(Runway) assigned} to a
@@ -4725,6 +4760,13 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Return the value associated with {@code key}, using {@code filter} to
      * govern field accessibility.
+     * <p>
+     * A key without navigation reads only the source that supplies it: the
+     * first non-null value from a dynamic attribute, the field named
+     * {@code key}, a {@link Computed} value, a {@link Derived} value, and, when
+     * {@code key} is exactly {@code "id"}, this {@link Record Record's}
+     * {@link #id()}. That is the order in which {@link #map()} resolves a key.
+     * </p>
      *
      * @param key the key name or navigation key
      * @param filter a {@link Predicate} that determines whether a declared
@@ -4733,89 +4775,86 @@ public abstract class Record implements Comparable<Record> {
      */
     @SuppressWarnings("unchecked")
     private <T> T get(String key, Predicate<Field> filter) {
-        if(key.equalsIgnoreCase("id")) {
-            return (T) data().get(key);
+        String[] stops = key.split("\\.");
+        if(stops.length == 1) {
+            Object value = dynamicData.get(key);
+            if(value == null) {
+                try {
+                    Field field = StaticAnalysis.instance().getField(this, key);
+                    if(filter.test(field)) {
+                        value = field.get(this);
+                        value = dereference(key, value);
+                    }
+                }
+                catch (ReferenceNotFoundException e) {
+                    throw e;
+                }
+                catch (Exception e) {/* ignore */}
+            }
+            if(value == null) {
+                Supplier<?> computer = $computed().get(key);
+                if(computer != null) {
+                    value = computer.get();
+                }
+            }
+            if(value == null) {
+                value = derive(key);
+            }
+            if(value == null && key.equals("id")) {
+                value = id;
+            }
+            return (T) value;
         }
         else {
-            String[] stops = key.split("\\.");
-            if(stops.length == 1) {
-                Object value = dynamicData.get(key);
-                if(value == null) {
-                    try {
-                        Field field = StaticAnalysis.instance().getField(this,
-                                key);
-                        if(filter.test(field)) {
-                            value = field.get(this);
-                            value = dereference(key, value);
+            // The presented key is a navigation key, so incrementally
+            // traverse the document graph.
+            String stop = stops[0];
+            Object destination = get(stop, filter);
+            String path = StringUtils.join(stops, '.', 1, stops.length);
+            if(destination instanceof Record) {
+                return (T) ((Record) destination).get(path, filter);
+            }
+            else if(Sequences.isSequence(destination)) {
+                Collection<Object> seq = destination instanceof Set
+                        ? Sets.newLinkedHashSet()
+                        : Lists.newArrayList();
+                Sequences.forEach(destination, item -> {
+                    if(item instanceof Record) {
+                        Object next = ((Record) item).get(path, filter);
+                        // NOTE: When the remaining path crosses another
+                        // collection-valued field, the recursive call
+                        // returns a collection. Flatten those results into
+                        // this level's sequence so the final return value
+                        // is a flat list of leaf values, not nested
+                        // collections-of-collections.
+                        //
+                        // e.g., for "orgs.seats.member.userId" where "orgs"
+                        // and "seats" are both Sets:
+                        //
+                        // @formatter:off
+                        // depth 0: iterates each Org in "orgs"
+                        // depth 1: iterates each Seat in "seats"
+                        // depth 2: "member" is a single Record
+                        // depth 3: returns scalar "alice123"
+                        // depth 2 collects: {"alice123", ...}
+                        // depth 1 flattens: {"alice123", ...}
+                        // depth 0 flattens: {"alice123", ...}
+                        // @formatter:on
+                        //
+                        // Each level flattens one layer; recursion
+                        // guarantees everything below is already flat.
+                        if(Sequences.isSequence(next)) {
+                            Sequences.forEach(next, seq::add);
+                        }
+                        else if(next != null) {
+                            seq.add(next);
                         }
                     }
-                    catch (ReferenceNotFoundException e) {
-                        throw e;
-                    }
-                    catch (Exception e) {/* ignore */}
-                }
-                if(value == null) {
-                    value = $derived().get(key);
-                }
-                if(value == null) {
-                    Supplier<?> computer = $computed().get(key);
-                    if(computer != null) {
-                        value = computer.get();
-                    }
-                }
-                return (T) value;
+                });
+                return !seq.isEmpty() ? (T) seq : null;
             }
             else {
-                // The presented key is a navigation key, so incrementally
-                // traverse the document graph.
-                String stop = stops[0];
-                Object destination = get(stop, filter);
-                String path = StringUtils.join(stops, '.', 1, stops.length);
-                if(destination instanceof Record) {
-                    return (T) ((Record) destination).get(path, filter);
-                }
-                else if(Sequences.isSequence(destination)) {
-                    Collection<Object> seq = destination instanceof Set
-                            ? Sets.newLinkedHashSet()
-                            : Lists.newArrayList();
-                    Sequences.forEach(destination, item -> {
-                        if(item instanceof Record) {
-                            Object next = ((Record) item).get(path, filter);
-                            // NOTE: When the remaining path crosses another
-                            // collection-valued field, the recursive call
-                            // returns a collection. Flatten those results into
-                            // this level's sequence so the final return value
-                            // is a flat list of leaf values, not nested
-                            // collections-of-collections.
-                            //
-                            // e.g., for "orgs.seats.member.userId" where "orgs"
-                            // and "seats" are both Sets:
-                            //
-                            // @formatter:off
-                            // depth 0: iterates each Org in "orgs"
-                            // depth 1: iterates each Seat in "seats"
-                            // depth 2: "member" is a single Record
-                            // depth 3: returns scalar "alice123"
-                            // depth 2 collects: {"alice123", ...}
-                            // depth 1 flattens: {"alice123", ...}
-                            // depth 0 flattens: {"alice123", ...}
-                            // @formatter:on
-                            //
-                            // Each level flattens one layer; recursion
-                            // guarantees everything below is already flat.
-                            if(Sequences.isSequence(next)) {
-                                Sequences.forEach(next, seq::add);
-                            }
-                            else if(next != null) {
-                                seq.add(next);
-                            }
-                        }
-                    });
-                    return !seq.isEmpty() ? (T) seq : null;
-                }
-                else {
-                    return null;
-                }
+                return null;
             }
         }
     }
@@ -6533,6 +6572,13 @@ public abstract class Record implements Comparable<Record> {
         private final Map<Class<? extends Record>, List<Method>> derivedMethodsByClass;
 
         /**
+         * A mapping from each {@link Record} class that
+         * {@link #getDerivedMethodsByKey(Class)} has inspected to the result
+         * for that class.
+         */
+        private final Map<Class<? extends Record>, Map<String, Method>> derivedMethodsByKeyByClass;
+
+        /**
          * Construct a new instance.
          */
         private StaticAnalysis() {
@@ -6555,6 +6601,7 @@ public abstract class Record implements Comparable<Record> {
             this.classesByName = new HashMap<>();
             this.computedMethodsByClass = new ConcurrentHashMap<>();
             this.derivedMethodsByClass = new ConcurrentHashMap<>();
+            this.derivedMethodsByKeyByClass = new ConcurrentHashMap<>();
             Set<String> internalFieldNames = INTERNAL_FIELDS.keySet();
             reflection.getSubTypesOf(Record.class).forEach(type -> {
                 classesByName.put(type.getName(), type);
@@ -7070,6 +7117,50 @@ public abstract class Record implements Comparable<Record> {
         List<Method> getDerivedMethods(Class<? extends Record> clazz) {
             return getAnnotatedMethods(clazz, Derived.class,
                     derivedMethodsByClass);
+        }
+
+        /**
+         * Return the {@link Derived} method that supplies each derived property
+         * of {@code clazz}, keyed by property.
+         * <p>
+         * When several methods supply one key, the result holds the last in the
+         * order that {@link #getDerivedMethods(Class)} guarantees. Every call
+         * for the same {@code clazz} returns the same {@link Map}.
+         * </p>
+         *
+         * @param clazz the {@link Record} class to inspect
+         * @return an unmodifiable {@link Map} from each derived key to its
+         *         method
+         * @throws IllegalArgumentException if a {@link Derived} method of
+         *             {@code clazz} requires parameters
+         */
+        Map<String, Method> getDerivedMethodsByKey(
+                Class<? extends Record> clazz) {
+            Map<String, Method> methods = derivedMethodsByKeyByClass.get(clazz);
+            if(methods == null) {
+                // On Java 8, computeIfAbsent locks the bin even when the key is
+                // present, so a plain read serves every cached lookup.
+                methods = derivedMethodsByKeyByClass.computeIfAbsent(clazz,
+                        type -> {
+                            Map<String, Method> byKey = new HashMap<>();
+                            for (Method method : getDerivedMethods(type)) {
+                                if(method.getParameterCount() == 0) {
+                                    String key = method
+                                            .getAnnotation(Derived.class)
+                                            .value();
+                                    byKey.put(key.isEmpty() ? method.getName()
+                                            : key, method);
+                                }
+                                else {
+                                    throw new IllegalArgumentException(
+                                            "A method annotated with Derived "
+                                                    + "cannot require parameters");
+                                }
+                            }
+                            return Collections.unmodifiableMap(byKey);
+                        });
+            }
+            return methods;
         }
 
         /**
