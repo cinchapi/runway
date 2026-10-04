@@ -16,9 +16,10 @@
 package com.cinchapi.runway.util;
 
 import java.util.AbstractMap;
+import java.util.AbstractSet;
 import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -50,9 +51,27 @@ import javax.annotation.concurrent.NotThreadSafe;
 public class OnDemandMap<K, V> extends AbstractMap<K, V> {
 
     /**
-     * The entry for each key, in the order the keys were first registered.
+     * The entry for each key.
      */
-    private final Map<K, Entry<K, V>> entries = new LinkedHashMap<>();
+    private final Map<K, Entry<K, V>> entries = new HashMap<>();
+
+    /**
+     * The read-only view of {@link #entries} that {@link #entrySet()} returns.
+     */
+    private final Set<Entry<K, V>> view = new AbstractSet<Entry<K, V>>() {
+
+        @Override
+        public Iterator<Entry<K, V>> iterator() {
+            return Collections.unmodifiableCollection(entries.values())
+                    .iterator();
+        }
+
+        @Override
+        public int size() {
+            return entries.size();
+        }
+
+    };
 
     /**
      * Register {@code key} so that its value is produced by {@code supplier} on
@@ -113,14 +132,13 @@ public class OnDemandMap<K, V> extends AbstractMap<K, V> {
     /**
      * {@inheritDoc}
      * <p>
-     * The result is an unmodifiable snapshot of the entries, in the order the
-     * keys were first registered.
+     * The result is an unmodifiable view, which reflects each later
+     * registration of a key.
      * </p>
      */
     @Override
     public Set<Entry<K, V>> entrySet() {
-        return Collections
-                .unmodifiableSet(new LinkedHashSet<>(entries.values()));
+        return view;
     }
 
     /**
