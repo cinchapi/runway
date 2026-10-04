@@ -1326,14 +1326,14 @@ public abstract class Record implements Comparable<Record> {
     private transient Binding binding = null;
 
     /**
-     * The {@link #$computed() computed properties}, or {@code null} before the
-     * first read of one.
+     * The {@link #$computed() computed properties}, or {@code null} until
+     * {@link #$computed()} gathers them.
      */
     private transient OnDemandMap<String, Object> computed = null;
 
     /**
-     * The {@link #$derived() derived properties}, or {@code null} before the
-     * first read of one.
+     * The {@link #$derived() derived properties}, or {@code null} until
+     * {@link #$derived()} gathers them.
      */
     private transient OnDemandMap<String, Object> derived = null;
 
@@ -2227,7 +2227,7 @@ public abstract class Record implements Comparable<Record> {
         Predicate<Entry<String, Object>> filter = entry -> !exclude
                 .contains(entry.getKey());
         // A computed value is produced anew on each read, so the accumulator
-        // reads each value once and skips a null itself.
+        // skips a null value; a separate filter would run the method again.
         BiConsumer<Map<String, Object>, Entry<String, Object>> accumulator = (
                 map, entry) -> {
             Object value = entry.getValue();
@@ -3867,14 +3867,18 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Return the computed properties of this {@link Record}.
      * <p>
-     * The result holds the properties from {@link #computed()}, then those from
-     * each {@link Computed} method. The methods come in a fixed order: each
-     * default interface method that the class does not override, then each
-     * method declared in the class, then each method declared in each
-     * superclass. A later property with the same key replaces an earlier one. A
-     * read of the result runs only the method behind the key it reads, anew on
-     * every read. A call that fails leaves this {@link Record} with no computed
-     * properties, so the next call gathers them again.
+     * The properties come from {@link #computed()} and from each
+     * {@link Computed} method. When several of them supply one key, the value
+     * comes from the one that is last in this order: {@link #computed()}, each
+     * default interface method that the class does not override, each method
+     * declared in the class, and each method declared in each superclass. A
+     * method that does not supply the value never runs.
+     * </p>
+     * <p>
+     * Reading a key runs only the method that supplies it, anew on every read.
+     * </p>
+     * <p>
+     * A later call never returns properties left from a call that threw.
      * </p>
      *
      * @return the computed properties
@@ -3883,9 +3887,8 @@ public abstract class Record implements Comparable<Record> {
      */
     private OnDemandMap<String, Object> $computed() {
         if(computed == null) {
-            // The computed() hook may read this Record, and that read must see
-            // the properties gathered so far instead of starting the walk
-            // again.
+            // The computed() hook may read this Record, and that read must find
+            // these properties instead of gathering them again without end.
             computed = new OnDemandMap<>();
             try {
                 computed().forEach(computed::compute);
@@ -3908,15 +3911,21 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Return the derived properties of this {@link Record}.
      * <p>
-     * The result holds the properties from {@link #derived()}, then those from
-     * each {@link Derived} method. The methods come in a fixed order: each
-     * default interface method that the class does not override, then each
-     * method declared in the class, then each method declared in each
-     * superclass. A later property with the same key replaces an earlier one. A
-     * read of the result runs only the method behind the key it reads, and each
-     * method runs once: every later read returns the value it returned. A call
-     * that fails leaves this {@link Record} with no derived properties, so the
-     * next call gathers them again.
+     * The properties come from {@link #derived()} and from each {@link Derived}
+     * method. When several of them supply one key, the value comes from the one
+     * that is last in this order: {@link #derived()}, each default interface
+     * method that the class does not override, each method declared in the
+     * class, and each method declared in each superclass. A method that does
+     * not supply the value never runs.
+     * </p>
+     * <p>
+     * Reading a key runs only the method that supplies it. The first read that
+     * succeeds produces the value, and every later read returns it. A read made
+     * while the method runs returns {@code null}. A read whose method throws
+     * fails, and the next read of that key runs the method again.
+     * </p>
+     * <p>
+     * A later call never returns properties left from a call that threw.
      * </p>
      *
      * @return the derived properties
@@ -3925,8 +3934,8 @@ public abstract class Record implements Comparable<Record> {
      */
     private OnDemandMap<String, Object> $derived() {
         if(derived == null) {
-            // A Derived method may read this Record, and that read must see the
-            // properties gathered so far instead of starting the walk again.
+            // The derived() hook may read this Record, and that read must find
+            // these properties instead of gathering them again without end.
             derived = new OnDemandMap<>();
             try {
                 derived().forEach(derived::put);
@@ -4801,6 +4810,8 @@ public abstract class Record implements Comparable<Record> {
      *            parameters that is available to this {@link Record Record's}
      *            class
      * @return the method's result
+     * @throws RuntimeException if {@code method} throws, holding that exception
+     *             itself or as a cause
      */
     private Object invokePropertyMethod(Method method) {
         if(method.isDefault()) {

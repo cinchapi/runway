@@ -28,21 +28,27 @@ import javax.annotation.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 
 /**
- * A {@link Map} whose values are stored, derived, or computed, and produced
- * only when a caller reads them.
+ * A {@link Map} that can hold a value a caller provides, or a value that is
+ * produced only when a caller reads it.
  * <p>
- * {@link #put(Object, Object)} stores a value.
- * {@link #derive(Object, Supplier)} registers a value that is produced on its
- * first read and returned by every later read.
- * {@link #compute(Object, Supplier)} registers a value that is produced anew on
- * every read. A later registration of a key replaces the earlier one, whatever
- * their kinds.
+ * Each key holds one of three kinds of value. A stored value, from
+ * {@link #put(Object, Object)}, is the value the caller provides. A derived
+ * value, from {@link #derive(Object, Supplier)}, is produced once and then
+ * kept. A computed value, from {@link #compute(Object, Supplier)}, is produced
+ * anew on every read. A later registration of a key replaces the earlier one,
+ * whatever their kinds.
  * </p>
  * <p>
- * Listing the entries produces no value. Each entry of a derived key is a
- * {@link DerivedEntry}, and each entry of a computed key is a
- * {@link ComputedEntry}, so a caller can tell the kinds apart and skip an entry
- * before reading its value.
+ * Only a read of a value produces it. Iterating the {@link #entrySet()}
+ * produces no value, and each entry shows its kind. An entry of a derived value
+ * is a {@link DerivedEntry}, and an entry of a computed value is a
+ * {@link ComputedEntry}, so a caller can skip an entry before reading it.
+ * {@link #put(Object, Object)} returns the previous value only when that value
+ * was stored. It returns {@code null} in place of a derived or computed value.
+ * </p>
+ * <p>
+ * The map does not support removal. Removing a key that it holds throws
+ * {@link UnsupportedOperationException}.
  * </p>
  *
  * @author Jeff Nelson
@@ -92,6 +98,11 @@ public class OnDemandMap<K, V> extends AbstractMap<K, V> {
     /**
      * Register {@code key} so that its value is produced by {@code supplier} on
      * the first read that succeeds, and returned by every later read.
+     * <p>
+     * A read whose {@code supplier} throws keeps no value, so the next read
+     * runs {@code supplier} again. A read made while {@code supplier} runs,
+     * such as one that {@code supplier} makes itself, returns {@code null}.
+     * </p>
      *
      * @param key the key
      * @param supplier the {@link Supplier} of the value
@@ -100,13 +111,6 @@ public class OnDemandMap<K, V> extends AbstractMap<K, V> {
         entries.put(key, new DerivedEntry<>(key, supplier));
     }
 
-    /**
-     * {@inheritDoc}
-     * <p>
-     * The result is an unmodifiable view, which reflects each later
-     * registration of a key.
-     * </p>
-     */
     @Override
     public Set<Entry<K, V>> entrySet() {
         return view;
@@ -119,14 +123,6 @@ public class OnDemandMap<K, V> extends AbstractMap<K, V> {
         return entry != null ? entry.getValue() : null;
     }
 
-    /**
-     * {@inheritDoc}
-     * <p>
-     * The result is the previous stored value. It is {@code null} when
-     * {@code key} held no value or held a derived or computed value, which this
-     * method does not produce.
-     * </p>
-     */
     @Override
     @Nullable
     public V put(K key, V value) {
@@ -188,14 +184,7 @@ public class OnDemandMap<K, V> extends AbstractMap<K, V> {
 
     /**
      * The entry of a key that {@link OnDemandMap#derive(Object, Supplier)}
-     * registered. The first read that succeeds produces the value, and every
-     * later read returns it.
-     * <p>
-     * A read whose {@link Supplier} throws leaves no value, so the next read
-     * runs the {@link Supplier} again. A read made while the {@link Supplier}
-     * runs, such as one the {@link Supplier} makes itself, returns
-     * {@code null}.
-     * </p>
+     * registered. Reading its value follows the contract of that method.
      */
     public static final class DerivedEntry<K, V> implements Entry<K, V> {
 

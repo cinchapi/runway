@@ -94,12 +94,13 @@ public class OnDemandMapTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Read the key of every entry.</li>
+     * <li>Find the entry for each key.</li>
+     * <li>Read the value of the entry for {@code a}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The entries for {@code a}, {@code b} and
-     * {@code c} are present; {@code b} is a {@link DerivedEntry}, {@code c} is
-     * a {@link ComputedEntry}, and no supplier ran.
+     * <strong>Expected:</strong> The value of {@code a} is {@code 1}, {@code b}
+     * is a {@link DerivedEntry}, {@code c} is a {@link ComputedEntry}, and no
+     * supplier ran.
      */
     @Test
     public void testEntrySetProducesNoValues() {
