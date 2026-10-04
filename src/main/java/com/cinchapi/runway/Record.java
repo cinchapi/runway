@@ -101,8 +101,9 @@ import com.cinchapi.runway.db.Saver;
 import com.cinchapi.runway.db.Saver.Timing;
 import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
-import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.util.KeySelection;
+import com.cinchapi.runway.util.OnDemandMap;
+import com.cinchapi.runway.util.OnDemandMap.ComputedEntry;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
@@ -760,6 +761,30 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return the key of the property that {@code method} supplies.
+     *
+     * @param method a method annotated with {@code annotation}
+     * @param annotation {@link Computed} or {@link Derived}
+     * @return the annotation's value, or the method's name when that value is
+     *         empty
+     * @throws IllegalArgumentException if {@code method} requires parameters
+     */
+    private static String getPropertyKey(Method method,
+            Class<? extends Annotation> annotation) {
+        if(method.getParameterCount() == 0) {
+            String key = annotation == Computed.class
+                    ? method.getAnnotation(Computed.class).value()
+                    : method.getAnnotation(Derived.class).value();
+            return key.isEmpty() ? method.getName() : key;
+        }
+        else {
+            throw new IllegalArgumentException(
+                    "A method annotated with " + annotation.getSimpleName()
+                            + " cannot require parameters");
+        }
+    }
+
+    /**
      * Return {@code true} if the record identified by {@code id} is in a
      * "zombie" state meaning it exists in the database without any actual data.
      *
@@ -1301,14 +1326,16 @@ public abstract class Record implements Comparable<Record> {
     private transient Binding binding = null;
 
     /**
-     * A cache of the {@link #$computed() properties}.
+     * The {@link #$computed() computed properties}, or {@code null} until
+     * {@link #$computed()} gathers them.
      */
-    private transient Map<String, Supplier<Object>> computed = null;
+    private transient OnDemandMap<String, Object> computed = null;
 
     /**
-     * A cache of the {@link #$derived() properties}.
+     * The {@link #$derived() derived properties}, or {@code null} until
+     * {@link #$derived()} gathers them.
      */
-    private transient Map<String, Object> derived = null;
+    private transient OnDemandMap<String, Object> derived = null;
 
     /**
      * Per-instance cache for {@link #computeOnce(String, Supplier)} results.
@@ -2199,23 +2226,24 @@ public abstract class Record implements Comparable<Record> {
         List<String> exclude = selection.exclude();
         Predicate<Entry<String, Object>> filter = entry -> !exclude
                 .contains(entry.getKey());
-        if(!options.serializeNullValues()) {
-            filter = filter.and(entry -> entry.getValue() != null);
-        }
+        // A computed value is produced anew on each read, so the accumulator
+        // skips a null value; a separate filter would run the method again.
         BiConsumer<Map<String, Object>, Entry<String, Object>> accumulator = (
                 map, entry) -> {
             Object value = entry.getValue();
-            Collection<?> collection;
-            if(options.flattenSingleElementCollections()
-                    && value instanceof Collection
-                    && (collection = (Collection<?>) value).size() == 1) {
-                value = Iterables.getOnlyElement(collection);
-            }
-            if(value != null) {
-                map.merge(entry.getKey(), value, MergeStrategies::upsert);
-            }
-            else {
-                map.put(entry.getKey(), value);
+            if(value != null || options.serializeNullValues()) {
+                Collection<?> collection;
+                if(options.flattenSingleElementCollections()
+                        && value instanceof Collection
+                        && (collection = (Collection<?>) value).size() == 1) {
+                    value = Iterables.getOnlyElement(collection);
+                }
+                if(value != null) {
+                    map.merge(entry.getKey(), value, MergeStrategies::upsert);
+                }
+                else {
+                    map.put(entry.getKey(), value);
+                }
             }
         };
         Stream<Entry<String, Object>> pool;
@@ -3837,66 +3865,38 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the computed properties of this {@link Record}, each mapped to a
-     * {@link Supplier} that computes the property's value anew on every call.
+     * Return the computed properties of this {@link Record}.
      * <p>
-     * The result holds the properties from {@link #computed()}, then those from
-     * each {@link Computed} method. The methods come in a fixed order: each
-     * default interface method that the class does not override, then each
-     * method declared in the class, then each method declared in each
-     * superclass. A later property with the same key replaces an earlier one. A
-     * call that fails leaves this {@link Record} with no computed properties,
-     * so the next call gathers them again.
+     * The properties come from {@link #computed()} and from each
+     * {@link Computed} method. When several of them supply one key, the value
+     * comes from the one that is last in this order: {@link #computed()}, each
+     * default interface method that the class does not override, each method
+     * declared in the class, and each method declared in each superclass. A
+     * method that does not supply the value never runs.
+     * </p>
+     * <p>
+     * Reading a key runs only the method that supplies it, anew on every read.
+     * </p>
+     * <p>
+     * A later call never returns properties left from a call that threw.
      * </p>
      *
      * @return the computed properties
      * @throws IllegalArgumentException if a {@link Computed} method requires
      *             parameters
      */
-    private Map<String, Supplier<Object>> $computed() {
+    private OnDemandMap<String, Object> $computed() {
         if(computed == null) {
-            // The computed() hook may read this Record, and that read must see
-            // the properties gathered so far instead of starting the walk
-            // again.
-            computed = new HashMap<>();
+            // The computed() hook may read this Record, and that read must find
+            // these properties instead of gathering them again without end.
+            computed = new OnDemandMap<>();
             try {
-                computed.putAll(computed());
-                StaticAnalysis.instance().getComputedMethods(getClass())
-                        .forEach(method -> {
-                            Computed annotation = method
-                                    .getAnnotation(Computed.class);
-                            if(method.getParameterCount() == 0) {
-                                String key = annotation.value();
-                                if(key.isEmpty()) {
-                                    key = method.getName();
-                                }
-                                Supplier<Object> supplier;
-                                if(method.isDefault()) {
-                                    supplier = () -> Reflection
-                                            .invokeDefaultInterfaceMethod(this,
-                                                    method);
-                                }
-                                else {
-                                    supplier = () -> {
-                                        try {
-                                            return method.invoke(this);
-                                        }
-                                        catch (ReflectiveOperationException e) {
-                                            throw CheckedExceptions
-                                                    .wrapAsRuntimeException(e);
-                                        }
-                                    };
-                                }
-                                computed.put(key, supplier);
-                            }
-                            else {
-                                throw new IllegalArgumentException(
-                                        "A method annotated with "
-                                                + annotation.annotationType()
-                                                        .getSimpleName()
-                                                + " cannot require parameters");
-                            }
-                        });
+                computed().forEach(computed::compute);
+                for (Method method : StaticAnalysis.instance()
+                        .getComputedMethods(getClass())) {
+                    computed.compute(getPropertyKey(method, Computed.class),
+                            () -> invokePropertyMethod(method));
+                }
             }
             catch (RuntimeException | Error e) {
                 // A later call must gather the properties again instead of
@@ -3909,65 +3909,41 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the derived properties of this {@link Record}, each mapped to its
-     * value.
+     * Return the derived properties of this {@link Record}.
      * <p>
-     * The result holds the properties from {@link #derived()}, then those from
-     * each {@link Derived} method. The methods come in a fixed order: each
-     * default interface method that the class does not override, then each
-     * method declared in the class, then each method declared in each
-     * superclass. A later property with the same key replaces an earlier one.
-     * After a call succeeds, later calls return the same values without running
-     * the {@link Derived} methods again. A call that fails leaves this
-     * {@link Record} with no derived properties, so the next call gathers them
-     * again.
+     * The properties come from {@link #derived()} and from each {@link Derived}
+     * method. When several of them supply one key, the value comes from the one
+     * that is last in this order: {@link #derived()}, each default interface
+     * method that the class does not override, each method declared in the
+     * class, and each method declared in each superclass. A method that does
+     * not supply the value never runs.
+     * </p>
+     * <p>
+     * Reading a key runs only the method that supplies it. The first read that
+     * succeeds produces the value, and every later read returns it. A read made
+     * while the method runs returns {@code null}. A read whose method throws
+     * fails, and the next read of that key runs the method again.
+     * </p>
+     * <p>
+     * A later call never returns properties left from a call that threw.
      * </p>
      *
      * @return the derived properties
      * @throws IllegalArgumentException if a {@link Derived} method requires
      *             parameters
      */
-    private Map<String, Object> $derived() {
+    private OnDemandMap<String, Object> $derived() {
         if(derived == null) {
-            // A Derived method may read this Record, and that read must see the
-            // properties gathered so far instead of starting the walk again.
-            derived = new HashMap<>();
+            // The derived() hook may read this Record, and that read must find
+            // these properties instead of gathering them again without end.
+            derived = new OnDemandMap<>();
             try {
-                derived.putAll(derived());
-                StaticAnalysis.instance().getDerivedMethods(getClass())
-                        .forEach(method -> {
-                            Derived annotation = method
-                                    .getAnnotation(Derived.class);
-                            if(method.getParameterCount() == 0) {
-                                String key = annotation.value();
-                                if(key.isEmpty()) {
-                                    key = method.getName();
-                                }
-                                Object value;
-                                if(method.isDefault()) {
-                                    value = Reflection
-                                            .invokeDefaultInterfaceMethod(this,
-                                                    method);
-                                }
-                                else {
-                                    try {
-                                        value = method.invoke(this);
-                                    }
-                                    catch (ReflectiveOperationException e) {
-                                        throw CheckedExceptions
-                                                .wrapAsRuntimeException(e);
-                                    }
-                                }
-                                derived.put(key, value);
-                            }
-                            else {
-                                throw new IllegalArgumentException(
-                                        "A method annotated with "
-                                                + annotation.annotationType()
-                                                        .getSimpleName()
-                                                + " cannot require parameters");
-                            }
-                        });
+                derived().forEach(derived::put);
+                for (Method method : StaticAnalysis.instance()
+                        .getDerivedMethods(getClass())) {
+                    derived.derive(getPropertyKey(method, Derived.class),
+                            () -> invokePropertyMethod(method));
+                }
             }
             catch (RuntimeException | Error e) {
                 // A later call must gather the properties again instead of
@@ -4373,35 +4349,8 @@ public abstract class Record implements Comparable<Record> {
      * @return the data in this {@link Record}
      */
     private Map<String, Object> data() {
-        // The #computed data must be wrapped in a special map that only
-        // computes the requested values on-demand.
-        Map<String, Object> computed = new AbstractMap<String, Object>() {
-
-            @Override
-            public Set<Entry<String, Object>> entrySet() {
-                return $computed().entrySet().stream().map(ComputedEntry::new)
-                        .collect(Collectors.toSet());
-            }
-
-            @Override
-            public Object get(Object key) {
-                Supplier<?> computer = $computed().get(key);
-                if(computer != null) {
-                    return computer.get();
-                }
-                else {
-                    return null;
-                }
-            }
-
-            @Override
-            public Set<String> keySet() {
-                return $computed().keySet();
-            }
-
-        };
         Map<String, Object> data = BackupReadSourcesHashMap
-                .create(ImmutableMap.of("id", id), $derived(), computed);
+                .create(ImmutableMap.of("id", id), $derived(), $computed());
         fields().forEach(field -> {
             try {
                 Object value;
@@ -4725,6 +4674,13 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Return the value associated with {@code key}, using {@code filter} to
      * govern field accessibility.
+     * <p>
+     * A key without navigation reads only the source that supplies it: the
+     * first non-null value from a dynamic attribute, the field named
+     * {@code key}, a {@link Computed} value, a {@link Derived} value, and, when
+     * {@code key} is exactly {@code "id"}, this {@link Record Record's}
+     * {@link #id()}. That is the order in which {@link #map()} resolves a key.
+     * </p>
      *
      * @param key the key name or navigation key
      * @param filter a {@link Predicate} that determines whether a declared
@@ -4733,89 +4689,83 @@ public abstract class Record implements Comparable<Record> {
      */
     @SuppressWarnings("unchecked")
     private <T> T get(String key, Predicate<Field> filter) {
-        if(key.equalsIgnoreCase("id")) {
-            return (T) data().get(key);
+        String[] stops = key.split("\\.");
+        if(stops.length == 1) {
+            Object value = dynamicData.get(key);
+            if(value == null) {
+                try {
+                    Field field = StaticAnalysis.instance().getField(this, key);
+                    if(filter.test(field)) {
+                        value = field.get(this);
+                        value = dereference(key, value);
+                    }
+                }
+                catch (ReferenceNotFoundException e) {
+                    throw e;
+                }
+                catch (Exception e) {/* ignore */}
+            }
+            if(value == null) {
+                value = $computed().get(key);
+            }
+            if(value == null) {
+                value = $derived().get(key);
+            }
+            if(value == null && key.equals("id")) {
+                value = id;
+            }
+            return (T) value;
         }
         else {
-            String[] stops = key.split("\\.");
-            if(stops.length == 1) {
-                Object value = dynamicData.get(key);
-                if(value == null) {
-                    try {
-                        Field field = StaticAnalysis.instance().getField(this,
-                                key);
-                        if(filter.test(field)) {
-                            value = field.get(this);
-                            value = dereference(key, value);
+            // The presented key is a navigation key, so incrementally
+            // traverse the document graph.
+            String stop = stops[0];
+            Object destination = get(stop, filter);
+            String path = StringUtils.join(stops, '.', 1, stops.length);
+            if(destination instanceof Record) {
+                return (T) ((Record) destination).get(path, filter);
+            }
+            else if(Sequences.isSequence(destination)) {
+                Collection<Object> seq = destination instanceof Set
+                        ? Sets.newLinkedHashSet()
+                        : Lists.newArrayList();
+                Sequences.forEach(destination, item -> {
+                    if(item instanceof Record) {
+                        Object next = ((Record) item).get(path, filter);
+                        // NOTE: When the remaining path crosses another
+                        // collection-valued field, the recursive call
+                        // returns a collection. Flatten those results into
+                        // this level's sequence so the final return value
+                        // is a flat list of leaf values, not nested
+                        // collections-of-collections.
+                        //
+                        // e.g., for "orgs.seats.member.userId" where "orgs"
+                        // and "seats" are both Sets:
+                        //
+                        // @formatter:off
+                        // depth 0: iterates each Org in "orgs"
+                        // depth 1: iterates each Seat in "seats"
+                        // depth 2: "member" is a single Record
+                        // depth 3: returns scalar "alice123"
+                        // depth 2 collects: {"alice123", ...}
+                        // depth 1 flattens: {"alice123", ...}
+                        // depth 0 flattens: {"alice123", ...}
+                        // @formatter:on
+                        //
+                        // Each level flattens one layer; recursion
+                        // guarantees everything below is already flat.
+                        if(Sequences.isSequence(next)) {
+                            Sequences.forEach(next, seq::add);
+                        }
+                        else if(next != null) {
+                            seq.add(next);
                         }
                     }
-                    catch (ReferenceNotFoundException e) {
-                        throw e;
-                    }
-                    catch (Exception e) {/* ignore */}
-                }
-                if(value == null) {
-                    value = $derived().get(key);
-                }
-                if(value == null) {
-                    Supplier<?> computer = $computed().get(key);
-                    if(computer != null) {
-                        value = computer.get();
-                    }
-                }
-                return (T) value;
+                });
+                return !seq.isEmpty() ? (T) seq : null;
             }
             else {
-                // The presented key is a navigation key, so incrementally
-                // traverse the document graph.
-                String stop = stops[0];
-                Object destination = get(stop, filter);
-                String path = StringUtils.join(stops, '.', 1, stops.length);
-                if(destination instanceof Record) {
-                    return (T) ((Record) destination).get(path, filter);
-                }
-                else if(Sequences.isSequence(destination)) {
-                    Collection<Object> seq = destination instanceof Set
-                            ? Sets.newLinkedHashSet()
-                            : Lists.newArrayList();
-                    Sequences.forEach(destination, item -> {
-                        if(item instanceof Record) {
-                            Object next = ((Record) item).get(path, filter);
-                            // NOTE: When the remaining path crosses another
-                            // collection-valued field, the recursive call
-                            // returns a collection. Flatten those results into
-                            // this level's sequence so the final return value
-                            // is a flat list of leaf values, not nested
-                            // collections-of-collections.
-                            //
-                            // e.g., for "orgs.seats.member.userId" where "orgs"
-                            // and "seats" are both Sets:
-                            //
-                            // @formatter:off
-                            // depth 0: iterates each Org in "orgs"
-                            // depth 1: iterates each Seat in "seats"
-                            // depth 2: "member" is a single Record
-                            // depth 3: returns scalar "alice123"
-                            // depth 2 collects: {"alice123", ...}
-                            // depth 1 flattens: {"alice123", ...}
-                            // depth 0 flattens: {"alice123", ...}
-                            // @formatter:on
-                            //
-                            // Each level flattens one layer; recursion
-                            // guarantees everything below is already flat.
-                            if(Sequences.isSequence(next)) {
-                                Sequences.forEach(next, seq::add);
-                            }
-                            else if(next != null) {
-                                seq.add(next);
-                            }
-                        }
-                    });
-                    return !seq.isEmpty() ? (T) seq : null;
-                }
-                else {
-                    return null;
-                }
+                return null;
             }
         }
     }
@@ -4851,6 +4801,30 @@ public abstract class Record implements Comparable<Record> {
         forEachSequenceDelta(ImmutableSet.copyOf(_realms), baseline(REALMS_KEY),
                 $ -> changed[0] = true, $ -> changed[0] = true);
         return changed[0];
+    }
+
+    /**
+     * Return the value that {@code method} produces for this {@link Record}.
+     *
+     * @param method a {@link Computed} or {@link Derived} method without
+     *            parameters that is available to this {@link Record Record's}
+     *            class
+     * @return the method's result
+     * @throws RuntimeException if {@code method} throws, holding that exception
+     *             itself or as a cause
+     */
+    private Object invokePropertyMethod(Method method) {
+        if(method.isDefault()) {
+            return Reflection.invokeDefaultInterfaceMethod(this, method);
+        }
+        else {
+            try {
+                return method.invoke(this);
+            }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.wrapAsRuntimeException(e);
+            }
+        }
     }
 
     /**
