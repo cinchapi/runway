@@ -15,6 +15,8 @@
  */
 package com.cinchapi.runway;
 
+import java.util.Map;
+
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -70,6 +72,30 @@ public class RecordDerivedKeyTest {
     public void testMapWithKeysRunsOnlyTheNamedDerivedMethods() {
         Counted record = new Counted();
         Assert.assertEquals("a", record.map("a").get("a"));
+        Assert.assertEquals(0, record.bRuns);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code map} that excludes a derived
+     * key never runs the {@link Derived} method of that key.
+     * <p>
+     * <strong>Start state:</strong> A new {@link Counted} with the
+     * {@link Derived} keys {@code a} and {@code b}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Read every key except {@code b} with {@code map("-b")}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result maps {@code a} to {@code "a"} and
+     * has no {@code b}, and {@code b} never ran.
+     */
+    @Test
+    public void testMapExcludingDerivedKeyNeverRunsItsMethod() {
+        Counted record = new Counted();
+        Map<String, Object> data = record.map("-b");
+        Assert.assertEquals("a", data.get("a"));
+        Assert.assertFalse(data.containsKey("b"));
         Assert.assertEquals(0, record.bRuns);
     }
 

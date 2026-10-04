@@ -103,6 +103,7 @@ import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.util.KeySelection;
+import com.cinchapi.runway.util.LazyEntry;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
@@ -3911,26 +3912,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the derived properties of this {@link Record}, each mapped to its
-     * value.
-     * <p>
-     * The result holds each property that {@link #derive(String)} resolves: one
-     * for each key that a {@link Derived} method or {@link #derived()}
-     * supplies.
-     * </p>
-     *
-     * @return the derived properties
-     * @throws IllegalArgumentException if a {@link Derived} method requires
-     *             parameters
-     */
-    private Map<String, Object> $derived() {
-        Map<String, Method> methods = StaticAnalysis.instance()
-                .getDerivedMethodsByKey(getClass());
-        methods.keySet().forEach(this::derive);
-        return derivedCache(methods);
-    }
-
-    /**
      * Execute {@code work} within this {@link Record Record's} transactional
      * scope, against the raw transaction view: the work does not receive the
      * {@link Transactional#scope(TransactionInterface) scoped view} that
@@ -4351,8 +4332,26 @@ public abstract class Record implements Comparable<Record> {
             }
 
         };
+        // The derived data resolves each value when it is read, so a value
+        // that the caller excludes by its key is never derived.
+        Map<String, Object> derived = new AbstractMap<String, Object>() {
+
+            @Override
+            public Set<Entry<String, Object>> entrySet() {
+                return derivedKeys().stream()
+                        .map(key -> new LazyEntry<String, Object>(key,
+                                () -> derive(key)))
+                        .collect(Collectors.toSet());
+            }
+
+            @Override
+            public Object get(Object key) {
+                return derive((String) key);
+            }
+
+        };
         Map<String, Object> data = BackupReadSourcesHashMap
-                .create(ImmutableMap.of("id", id), $derived(), computed);
+                .create(ImmutableMap.of("id", id), derived, computed);
         fields().forEach(field -> {
             try {
                 Object value;
@@ -4646,6 +4645,21 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return derived;
+    }
+
+    /**
+     * Return every key that a {@link Derived} method or {@link #derived()}
+     * supplies for this {@link Record}.
+     *
+     * @return the derived keys
+     * @throws IllegalArgumentException if a {@link Derived} method of this
+     *             {@link Record Record's} class requires parameters
+     */
+    private Set<String> derivedKeys() {
+        Map<String, Method> methods = StaticAnalysis.instance()
+                .getDerivedMethodsByKey(getClass());
+        return Sets.union(methods.keySet(), derivedCache(methods).keySet())
+                .immutableCopy();
     }
 
     /**
