@@ -272,6 +272,69 @@ public class RecordDerivedKeyTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that when several {@link Derived} methods
+     * supply one key, only the method that supplies the value runs.
+     * <p>
+     * <strong>Start state:</strong> A new {@link Shadowing}, whose declared
+     * {@code label} method shadows the default method of {@link Shadowed},
+     * which throws if it runs.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Read {@code label} with {@code get}.</li>
+     * <li>Read every key with {@code map}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both reads return {@code "declared"}.
+     */
+    @Test
+    public void testShadowedDerivedMethodNeverRuns() {
+        Shadowing record = new Shadowing();
+        Assert.assertEquals("declared", record.get("label"));
+        Assert.assertEquals("declared", record.map().get("label"));
+    }
+
+    /**
+     * A type whose {@link Derived} method for {@code label} fails if it runs.
+     */
+    public interface Shadowed {
+
+        /**
+         * Fail, because a declared method shadows this one.
+         *
+         * @return never
+         */
+        @Derived("label")
+        default String defaultLabel() {
+            throw new AssertionError("The shadowed method ran");
+        }
+    }
+
+    /**
+     * A {@link Record} whose declared {@link Derived} method for {@code label}
+     * shadows the one from {@link Shadowed}.
+     */
+    static class Shadowing extends Record implements Shadowed {
+
+        /**
+         * A field, because a {@link Record} without fields cannot read its own
+         * data. See
+         * <a href="https://github.com/cinchapi/runway/issues/225">GH-225</a>.
+         */
+        String name = "shadowing";
+
+        /**
+         * Return the declared label.
+         *
+         * @return {@code "declared"}
+         */
+        @Derived("label")
+        public String declaredLabel() {
+            return "declared";
+        }
+    }
+
+    /**
      * A {@link Record} whose {@link Derived} methods read one another.
      */
     static class CrossReading extends Record {
