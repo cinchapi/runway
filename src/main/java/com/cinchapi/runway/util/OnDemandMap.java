@@ -74,6 +74,22 @@ public class OnDemandMap<K, V> extends AbstractMap<K, V> {
     };
 
     /**
+     * Register {@code key} so that its value is produced anew by
+     * {@code supplier} on every read.
+     *
+     * @param key the key
+     * @param supplier the {@link Supplier} of the value
+     */
+    public void compute(K key, Supplier<V> supplier) {
+        entries.put(key, new ComputedEntry<>(key, supplier));
+    }
+
+    @Override
+    public boolean containsKey(Object key) {
+        return entries.containsKey(key);
+    }
+
+    /**
      * Register {@code key} so that its value is produced by {@code supplier} on
      * the first read that succeeds, and returned by every later read.
      *
@@ -85,14 +101,22 @@ public class OnDemandMap<K, V> extends AbstractMap<K, V> {
     }
 
     /**
-     * Register {@code key} so that its value is produced anew by
-     * {@code supplier} on every read.
-     *
-     * @param key the key
-     * @param supplier the {@link Supplier} of the value
+     * {@inheritDoc}
+     * <p>
+     * The result is an unmodifiable view, which reflects each later
+     * registration of a key.
+     * </p>
      */
-    public void compute(K key, Supplier<V> supplier) {
-        entries.put(key, new ComputedEntry<>(key, supplier));
+    @Override
+    public Set<Entry<K, V>> entrySet() {
+        return view;
+    }
+
+    @Override
+    @Nullable
+    public V get(Object key) {
+        Entry<K, V> entry = entries.get(key);
+        return entry != null ? entry.getValue() : null;
     }
 
     /**
@@ -113,32 +137,8 @@ public class OnDemandMap<K, V> extends AbstractMap<K, V> {
     }
 
     @Override
-    @Nullable
-    public V get(Object key) {
-        Entry<K, V> entry = entries.get(key);
-        return entry != null ? entry.getValue() : null;
-    }
-
-    @Override
-    public boolean containsKey(Object key) {
-        return entries.containsKey(key);
-    }
-
-    @Override
     public int size() {
         return entries.size();
-    }
-
-    /**
-     * {@inheritDoc}
-     * <p>
-     * The result is an unmodifiable view, which reflects each later
-     * registration of a key.
-     * </p>
-     */
-    @Override
-    public Set<Entry<K, V>> entrySet() {
-        return view;
     }
 
     /**
