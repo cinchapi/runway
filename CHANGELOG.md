@@ -5,9 +5,20 @@
 * **Reading a record's data no longer scans its class for `@Computed` and `@Derived` methods.** Runway finds a `Record` class's `@Computed` and `@Derived` methods once and reuses them for every instance of that class. `map()`, `json()`, and `get()` therefore no longer repeat a reflective scan of the class hierarchy for each record. ([GH-216](https://github.com/cinchapi/runway/issues/216))
 * **Reading a key of a record runs only the `@Derived` method that supplies it.** `get(key)`, `map()`, and `json()` run the `@Derived` methods of the keys they return instead of every `@Derived` method on the record, so a key that the caller excludes with `-` is never derived. Each `@Derived` method still runs at most once per record, whichever read reaches it first. `get("id")` resolves only the `id` key, so a record whose `@Derived` method replaces its id, such as an alias, no longer loads its linked records or copies its fields to answer it. ([GH-220](https://github.com/cinchapi/runway/issues/220))
     * A `@Derived` method that throws fails only the reads that need its key. The values of the other `@Derived` methods remain, and the next read of the failing key runs its method again.
+    * When several `@Derived` methods supply one key, only the method that
+      supplies the value runs.
 * **Fixed a bug that caused `get` to disagree with `map()` and `json()` about a key that both a `@Computed` method and a `@Derived` method supply.** `get` returned the derived value, while `map()` and `json()` returned the computed value. `get` now returns the computed value, and the derived value when the computed value is `null`, as `map()` and `json()` do. ([GH-220](https://github.com/cinchapi/runway/issues/220))
 * **Fixed a bug that caused a `@Derived` method that reads another derived key to get `null` or that key's value depending on the order in which the methods were declared.** It now always gets the value. ([GH-220](https://github.com/cinchapi/runway/issues/220))
-* **Fixed a bug that caused a failed read of a record's derived or computed properties to leave partial properties behind.** When a `@Derived` method threw, or a `@Derived` or `@Computed` method required parameters, only the first `map()`, `json()`, or `get()` on that record failed. Later reads on the same instance returned the properties gathered before the failure, with no error. Each read gathers the properties again, so the failure repeats until its cause is fixed. ([GH-224](https://github.com/cinchapi/runway/issues/224))
+* **Fixed a bug that caused a failed read of a record's derived or computed
+  properties to leave partial properties behind.** When a `@Derived` method
+  threw, or a `@Derived` or `@Computed` method required parameters, only the
+  first `map()`, `json()`, or `get()` on that record failed. Later reads on the
+  same instance returned the properties gathered before the failure, with no
+  error. A later read that reaches the failing method fails the same way until
+  its cause is fixed. ([GH-224](https://github.com/cinchapi/runway/issues/224))
+* **Removed `com.cinchapi.runway.util.ComputedEntry`.** No Runway operation uses
+  it. A caller that needs a `Map.Entry` whose value a `Supplier` produces on
+  each read can implement `Map.Entry` directly.
 
 #### Version 2.4.0 (September 8, 2026)
 * **A dynamic write now conforms a `Collection` value to the field's declared type.** `Record#set` copies a `Collection` into the declared type of the field it writes when the supplied instance does not satisfy that type, so a field holds the same type whether its value arrived from a dynamic write, a load, or reference repair. ([GH-212](https://github.com/cinchapi/runway/issues/212))
